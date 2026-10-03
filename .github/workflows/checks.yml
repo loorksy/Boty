@@ -1,0 +1,76 @@
+name: CI
+
+# This file is new on this branch, so a push runs it immediately.
+# The workflow id already on main (.github/workflows/ci.yml) is still
+# workflow_dispatch only, and GitHub keeps using that copy's triggers.
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+jobs:
+  web:
+    name: Typecheck, lint, tests, Redis, build
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Gateway tests
+        run: npm run test:gateway
+      - name: Redis integration
+        env:
+          REDIS_URL: redis://localhost:6379
+        run: npm run test:resident
+      - name: Full test matrix
+        env:
+          REDIS_URL: redis://localhost:6379
+        run: npm run test:ci
+      - name: Provision TradingView library
+        env:
+          TRADINGVIEW_LIBRARY_URL: ${{ secrets.TRADINGVIEW_LIBRARY_URL }}
+          TRADINGVIEW_LIBRARY_TOKEN: ${{ secrets.TRADINGVIEW_LIBRARY_TOKEN }}
+        run: npm run provision:tradingview
+      - name: Build
+        run: npm run build
+
+  mcp:
+    name: MCP typecheck and catalog
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mcp/package-lock.json
+      - name: Install MCP dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Catalog test
+        run: npm run test:catalog
+      - name: Schema drift check
+        run: npm run schemas:check
