@@ -280,14 +280,16 @@ export async function failTask(id: string, error: string): Promise<void> {
 
 export async function cancelTask(id: string, reason = "cancelled"): Promise<AgentTask | null> {
   const now = nowIso();
-  await execute(
+  const result = await execute(
     `UPDATE agent_tasks
      SET status = 'cancelled', error = ?, updated_at = ?, finished_at = ?,
          lease_owner = NULL, lease_until = NULL
      WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')`,
     [reason, now, now, id],
   );
-  log.info("task.transition", { taskId: id, to: "cancelled", error: reason });
+  if (result.changes === 1) {
+    log.info("task.transition", { taskId: id, to: "cancelled", error: reason });
+  }
   return getTask(id);
 }
 
@@ -365,4 +367,137 @@ export async function openTaskForGoal(goalId: string): Promise<AgentTask | null>
 
 export function isTerminalTask(status: TaskStatus): boolean {
   return TERMINAL.has(status);
+}
+
+export interface TaskRunRecord {
+  id: string;
+  taskId: string;
+  parentRunId: string | null;
+  subAgentId: string | null;
+  status: string;
+  summary: string | null;
+  evidence: unknown[];
+  warnings: string[];
+  error: string | null;
+  tokens: number;
+  costUsd: number;
+  attempt: number;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+interface TaskRunRow {
+  id: string;
+  task_id: string;
+  parent_run_id: string | null;
+  subagent_id: string | null;
+  status: string;
+  summary: string | null;
+  evidence_json: string;
+  warnings_json: string;
+  error: string | null;
+  tokens: number;
+  cost_usd: number;
+  attempt: number;
+  started_at: string;
+  finished_at: string | null;
+}
+
+function mapRun(row: TaskRunRow): TaskRunRecord {
+  let evidence: unknown[] = [];
+  let warnings: string[] = [];
+  try {
+    const parsed = JSON.parse(row.evidence_json) as unknown;
+    if (Array.isArray(parsed)) evidence = parsed;
+  } catch {
+    evidence = [];
+  }
+  try {
+    const parsed = JSON.parse(row.warnings_json) as unknown;
+    if (Array.isArray(parsed)) warnings = parsed.map(String);
+  } catch {
+    warnings = [];
+  }
+  return {
+    id: row.id,
+    taskId: row.task_id,
+    parentRunId: row.parent_run_id,
+    subAgentId: row.subagent_id,
+    status: row.status,
+    summary: row.summary,
+    evidence,
+    warnings,
+    error: row.error,
+    tokens: Number(row.tokens ?? 0),
+    costUsd: Number(row.cost_usd ?? 0),
+    attempt: Number(row.attempt ?? 1),
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+  };
+}
+
+/** One row per attempt. A retry inserts another row and leaves the previous one. */
+export async function startTaskRun(input: {
+  taskId: string;
+  attempt: number;
+  parentRunId?: string | null;
+  subAgentId?: string | null;
+}): Promise<string> {
+  const id = randomUUID();
+  const now = nowIso();
+  await execute(
+    `INSERT INTO agent_task_runs (
+      id, task_id, parent_run_id, subagent_id, status, evidence_json, warnings_json,
+      tokens, cost_usd, attempt, started_at
+    ) VALUES (?, ?, ?, ?, 'running', '[]', '[]', 0, 0, ?, ?)`,
+    [id, input.taskId, input.parentRunId ?? null, input.subAgentId ?? null, input.attempt, now],
+  );
+  log.info("task.run.start", { runId: id, taskId: input.taskId, attempt: input.attempt });
+  return id;
+}
+
+export async function finishTaskRun(
+  runId: string,
+  patch: {
+    status: "completed" | "failed" | "cancelled";
+    summary?: string | null;
+    evidence?: unknown[];
+    warnings?: string[];
+    error?: string | null;
+    tokens?: number;
+    costUsd?: number;
+    subAgentId?: string | null;
+  },
+): Promise<void> {
+  const now = nowIso();
+  await execute(
+    `UPDATE agent_task_runs
+     SET status = ?, summary = ?, evidence_json = ?, warnings_json = ?, error = ?,
+         tokens = ?, cost_usd = ?, subagent_id = COALESCE(?, subagent_id), finished_at = ?
+     WHERE id = ?`,
+    [
+      patch.status,
+      patch.summary ?? null,
+      JSON.stringify(patch.evidence ?? []),
+      JSON.stringify(patch.warnings ?? []),
+      patch.error ?? null,
+      patch.tokens ?? 0,
+      patch.costUsd ?? 0,
+      patch.subAgentId ?? null,
+      now,
+      runId,
+    ],
+  );
+  log.info("task.run.finish", { runId, status: patch.status, error: patch.error ?? null });
+}
+
+export async function listTaskRuns(taskId?: string, limit = 20): Promise<TaskRunRecord[]> {
+  const cap = Math.min(100, Math.max(1, limit));
+  const rows = taskId
+    ? await query<TaskRunRow>(
+        "SELECT * FROM agent_task_runs WHERE task_id = ? ORDER BY started_at ASC LIMIT ?",
+        [taskId, cap],
+      )
+    : await query<TaskRunRow>("SELECT * FROM agent_task_runs ORDER BY started_at DESC LIMIT ?", [cap]);
+  return rows.map(mapRun);
 }

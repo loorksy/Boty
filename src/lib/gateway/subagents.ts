@@ -4,8 +4,8 @@
  */
 import { randomUUID } from "node:crypto";
 import { execute, query, queryOne } from "@/lib/db";
-import { detectSwings, detectTrend, type AgentCandle } from "@/lib/agent/marketContext/detectors";
 import { createLogger } from "@/lib/logger";
+import { executeSpecialist } from "./specialists";
 import {
   assertToolPermitted,
   TradeBoundaryError,
@@ -18,7 +18,6 @@ import {
   type SubAgentRole,
 } from "./roles";
 import { selectSkillsForRole, type SkillUse } from "./skills";
-import { countTasksByStatus } from "./tasks";
 
 const log = createLogger("gateway.subagents");
 
@@ -44,6 +43,7 @@ export interface SubAgentOutput {
   followUpSuggested: boolean;
   skills: SkillUse[];
   tokens: number;
+  subAgentId?: string;
 }
 
 export class SubAgentLimitError extends Error {
@@ -96,114 +96,6 @@ function policyFor(role: SubAgentRole, allowNotify: boolean): ToolPolicy {
   };
 }
 
-function asCandles(value: unknown): AgentCandle[] | null {
-  if (!Array.isArray(value) || value.length < 5) return null;
-  const candles: AgentCandle[] = [];
-  for (const item of value) {
-    if (!item || typeof item !== "object") return null;
-    const row = item as Record<string, unknown>;
-    const time = Number(row.time);
-    const open = Number(row.open);
-    const high = Number(row.high);
-    const low = Number(row.low);
-    const close = Number(row.close);
-    if (![time, open, high, low, close].every(Number.isFinite)) return null;
-    candles.push({ time, open, high, low, close });
-  }
-  return candles;
-}
-
-async function runRole(request: SubAgentRequest, skills: SkillUse[]): Promise<SubAgentOutput> {
-  const base = {
-    artifacts: [] as Array<Record<string, unknown>>,
-    skills,
-    tokens: 0,
-    followUpSuggested: false,
-  };
-  if (request.role === "structure_analyst") {
-    const candles = asCandles(request.context?.candles);
-    if (!candles) {
-      return {
-        ...base,
-        status: "failed",
-        summary: "Structure specialist was not given candles.",
-        evidence: [{ specialist: "src/lib/agent/agents/structureAgent.ts" }],
-        warnings: [],
-        errors: ["market_data_unavailable"],
-      };
-    }
-    const swings = detectSwings(candles);
-    const trend = detectTrend(swings);
-    return {
-      ...base,
-      status: "completed",
-      summary: `Structure specialist trend=${trend}, swings=${swings.length}.`,
-      evidence: [
-        {
-          specialist: "src/lib/agent/agents/structureAgent.ts",
-          detector: "src/lib/agent/marketContext/detectors.ts",
-          trend,
-          swings: swings.length,
-        },
-      ],
-      warnings: [],
-      errors: [],
-    };
-  }
-  if (request.role === "market_watcher") {
-    return {
-      ...base,
-      status: "completed",
-      summary: "Market watcher recorded a deterministic observation.",
-      evidence: [{ specialist: "src/lib/recommendations/recommendationTracker.ts", context: request.context ?? {} }],
-      warnings: request.context?.marketOpen === false ? ["market_closed"] : [],
-      errors: [],
-    };
-  }
-  if (request.role === "system_guardian") {
-    const counts = await countTasksByStatus();
-    const failed = counts.failed ?? 0;
-    return {
-      ...base,
-      status: "completed",
-      summary: failed > 0 ? `Gateway has ${failed} failed task(s).` : "Gateway task ledger is clear.",
-      evidence: [{ failed, counts }],
-      warnings: failed > 0 ? ["failed_tasks"] : [],
-      errors: [],
-      followUpSuggested: failed > 0,
-    };
-  }
-  if (request.role === "memory_curator") {
-    return {
-      ...base,
-      status: "completed",
-      summary: String(request.context?.summary ?? request.objective).slice(0, 500),
-      evidence: [{ specialist: "src/lib/agent/agentMemory.ts" }],
-      warnings: [],
-      errors: [],
-    };
-  }
-  const hasContext = request.context != null && Object.keys(request.context).length > 0;
-  if (!hasContext) {
-    return {
-      ...base,
-      status: "failed",
-      summary: `${request.role} had no evidence context.`,
-      evidence: [],
-      warnings: [],
-      errors: ["context_unavailable"],
-    };
-  }
-  return {
-    ...base,
-    status: "completed",
-    summary: `${request.role} reviewed the supplied evidence.`,
-    evidence: [{ role: request.role, keys: Object.keys(request.context ?? {}) }],
-    warnings: [],
-    errors: [],
-  };
-}
-
 export async function delegateSubAgent(
   request: SubAgentRequest,
   opts: {
@@ -238,7 +130,7 @@ export async function delegateSubAgent(
   }
   const id = randomUUID();
   const started = nowIso();
-  const run = opts.execute ?? runRole;
+  const run = opts.execute ?? executeSpecialist;
   await execute(
     `INSERT INTO agent_subagents (
       id, task_id, parent_run_id, role, status, objective, allowed_tools_json,
@@ -298,6 +190,7 @@ export async function delegateSubAgent(
     };
   }
   const finished = nowIso();
+  output = { ...output, subAgentId: id };
   await execute(
     `UPDATE agent_subagents
      SET status = ?, result_json = ?, error = ?, finished_at = ?

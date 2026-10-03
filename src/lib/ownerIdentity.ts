@@ -27,6 +27,21 @@ export class OwnerMissingError extends Error {
   }
 }
 
+export class OwnerAmbiguousError extends Error {
+  readonly status = 503;
+  readonly code = "OWNER_AMBIGUOUS";
+  constructor(
+    message = "Multiple accounts exist and no owner is pinned. Set AICHART_AGENT_USER_ID or LONORA_OWNER_EMAIL (ADMIN_EMAIL is accepted when it matches one account), or run npm run migrate:single-owner. The gateway will not guess.",
+  ) {
+    super(message);
+    this.name = "OwnerAmbiguousError";
+  }
+}
+
+export type OwnerResolution =
+  | { ok: true; id: number; source: "id" | "email" | "admin_email" | "only_user" }
+  | { ok: false; reason: "missing" | "ambiguous" };
+
 let cachedOwnerId: number | null = null;
 
 /** Test seam. Production never needs to forget the owner mid-process. */
@@ -39,56 +54,78 @@ function envOwnerId(): number | null {
   return Number.isInteger(fromEnv) && fromEnv > 0 ? fromEnv : null;
 }
 
-function envOwnerEmail(): string | null {
-  const email = (process.env.LONORA_OWNER_EMAIL || process.env.ADMIN_EMAIL || "")
-    .trim()
-    .toLowerCase();
+function envNamedEmail(name: "LONORA_OWNER_EMAIL" | "ADMIN_EMAIL"): string | null {
+  const email = (process.env[name] || "").trim().toLowerCase();
   return email || null;
 }
 
+async function userCount(): Promise<number> {
+  const row = await queryOne<{ n: number }>("SELECT COUNT(*) AS n FROM users");
+  return Number(row?.n ?? 0);
+}
+
+async function userIdByEmail(email: string): Promise<number | null> {
+  const row = await queryOne<{ id: number }>(
+    "SELECT id FROM users WHERE lower(email) = ? ORDER BY id ASC LIMIT 1",
+    [email],
+  );
+  return row ? Number(row.id) : null;
+}
+
 /**
- * Resolve the owner id without creating or mutating users.
- * Order: explicit id, explicit email, first admin, then the earliest user.
+ * Resolve the owner without creating users and without guessing.
+ *
+ * A pinned id, LONORA_OWNER_EMAIL, or ADMIN_EMAIL that matches one account
+ * wins. A database with exactly one user adopts that user when nothing is
+ * pinned. Several users and no matching pin is ambiguous: the gateway stops
+ * instead of promoting the earliest admin.
  */
-export async function getOwnerId(): Promise<number | null> {
-  if (cachedOwnerId !== null) return cachedOwnerId;
+export async function resolveOwner(): Promise<OwnerResolution> {
+  if (cachedOwnerId !== null) return { ok: true, id: cachedOwnerId, source: "id" };
   await initDb();
+  const count = await userCount();
+  if (count === 0) return { ok: false, reason: "missing" };
 
   const pinned = envOwnerId();
   if (pinned) {
     const row = await queryOne<{ id: number }>("SELECT id FROM users WHERE id = ?", [pinned]);
-    if (row) {
-      cachedOwnerId = Number(row.id);
-      return cachedOwnerId;
+    if (!row) return { ok: false, reason: "ambiguous" };
+    cachedOwnerId = Number(row.id);
+    return { ok: true, id: cachedOwnerId, source: "id" };
+  }
+
+  const ownerEmail = envNamedEmail("LONORA_OWNER_EMAIL");
+  if (ownerEmail) {
+    const id = await userIdByEmail(ownerEmail);
+    if (id == null) return { ok: false, reason: "ambiguous" };
+    cachedOwnerId = id;
+    return { ok: true, id, source: "email" };
+  }
+
+  const adminEmail = envNamedEmail("ADMIN_EMAIL");
+  if (adminEmail) {
+    const id = await userIdByEmail(adminEmail);
+    if (id != null) {
+      cachedOwnerId = id;
+      return { ok: true, id, source: "admin_email" };
     }
+    if (count > 1) return { ok: false, reason: "ambiguous" };
   }
 
-  const email = envOwnerEmail();
-  if (email) {
-    const row = await queryOne<{ id: number }>(
-      "SELECT id FROM users WHERE email = ? ORDER BY id ASC LIMIT 1",
-      [email],
-    );
-    if (row) {
-      cachedOwnerId = Number(row.id);
-      return cachedOwnerId;
-    }
+  if (count === 1) {
+    const only = await queryOne<{ id: number }>("SELECT id FROM users ORDER BY id ASC LIMIT 1");
+    if (!only) return { ok: false, reason: "missing" };
+    cachedOwnerId = Number(only.id);
+    return { ok: true, id: cachedOwnerId, source: "only_user" };
   }
 
-  const admin = await queryOne<{ id: number }>(
-    "SELECT id FROM users WHERE role = 'admin' ORDER BY id ASC LIMIT 1",
-  );
-  if (admin) {
-    cachedOwnerId = Number(admin.id);
-    return cachedOwnerId;
-  }
+  return { ok: false, reason: "ambiguous" };
+}
 
-  const first = await queryOne<{ id: number }>("SELECT id FROM users ORDER BY id ASC LIMIT 1");
-  if (first) {
-    cachedOwnerId = Number(first.id);
-    return cachedOwnerId;
-  }
-  return null;
+/** Resolve the owner id without creating or mutating users. */
+export async function getOwnerId(): Promise<number | null> {
+  const resolved = await resolveOwner();
+  return resolved.ok ? resolved.id : null;
 }
 
 export async function getOwner(): Promise<PublicUser | null> {
@@ -103,8 +140,12 @@ export async function getOwner(): Promise<PublicUser | null> {
  * account and does not touch any other row.
  */
 export async function ensureOwner(): Promise<PublicUser> {
-  const id = await getOwnerId();
-  if (id == null) throw new OwnerMissingError();
+  const resolved = await resolveOwner();
+  if (!resolved.ok) {
+    if (resolved.reason === "ambiguous") throw new OwnerAmbiguousError();
+    throw new OwnerMissingError();
+  }
+  const id = resolved.id;
   await execute(
     "UPDATE users SET role = 'admin', status = 'active' WHERE id = ?",
     [id],

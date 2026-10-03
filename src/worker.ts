@@ -45,6 +45,8 @@ async function main(): Promise<void> {
     goalDispatchEveryMs: Number(process.env.GATEWAY_GOAL_DISPATCH_MS || 30_000),
     taskReclaimEveryMs: Number(process.env.GATEWAY_TASK_RECLAIM_MS || 45_000),
     guardianEveryMs: Number(process.env.GATEWAY_GUARDIAN_MS || 120_000),
+    notifyEveryMs: Number(process.env.GATEWAY_NOTIFY_DELIVERY_MS || 15_000),
+    heartbeatEveryMs: Number(process.env.GATEWAY_HEARTBEAT_MS || 30_000),
   });
   // Outbound channels (Telegram today): how user_message events queued by
   // the web process get their replies delivered from this process.

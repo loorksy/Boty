@@ -89,9 +89,9 @@ export async function getCurrentUser(): Promise<PublicUser | null> {
   );
   if (!row) return null;
   const user = userRowToPublicUser(row);
-  const { getOwnerId } = await import("./ownerIdentity");
-  const ownerId = await getOwnerId();
-  if (ownerId != null && user.id !== ownerId) return null;
+  const { resolveOwner } = await import("./ownerIdentity");
+  const resolved = await resolveOwner();
+  if (!resolved.ok || user.id !== resolved.id) return null;
   return user;
 }
 

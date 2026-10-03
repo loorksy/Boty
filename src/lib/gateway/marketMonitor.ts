@@ -15,7 +15,8 @@ import { createLogger } from "@/lib/logger";
 import { listActiveTrackedRecommendations } from "@/lib/recommendations/recommendationStore";
 import { getFlag, setFlag } from "@/lib/store";
 import { createTask } from "./tasks";
-import { claimNotification } from "./notify";
+import { claimNotification, type NotificationState } from "./notify";
+import { deepModelEnabled } from "./deepModel";
 
 const log = createLogger("gateway.market");
 
@@ -137,7 +138,9 @@ export interface MarketWatchResult {
   reasons: string[];
   fingerprint: string;
   taskId: string | null;
+  /** True only after a transport accepts the message. Claiming intent is not delivery. */
   notified: boolean;
+  notificationState: NotificationState | "unchanged" | "skipped";
   notificationReason: string;
   marketOpen: boolean;
   error: string | null;
@@ -174,7 +177,9 @@ export async function runMarketWatch(opts: {
   await setFlag(FINGERPRINT_FLAG, JSON.stringify(snapshot));
   let taskId: string | null = null;
   let notified = false;
+  let notificationState: MarketWatchResult["notificationState"] = "skipped";
   let notificationReason = "not_material";
+  const deepModel = deepModelEnabled();
   if (assessment.material && assessment.deep && !error) {
     let candles: unknown[] | undefined;
     if (!opts.snapshot) {
@@ -189,7 +194,8 @@ export async function runMarketWatch(opts: {
         reasons: assessment.reasons,
         fingerprint: assessment.fingerprint,
         candles,
-        model: process.env.GATEWAY_DEEP_MODEL === "1" ? "allowed" : "deterministic_only",
+        ownerId: opts.ownerId,
+        deepModel,
       },
     });
     taskId = task.id;
@@ -203,11 +209,14 @@ export async function runMarketWatch(opts: {
       body: `XAUUSD: ${assessment.reasons.join(", ")}`,
       taskId,
     });
-    notified = claim.deliver;
+    notificationState = claim.state;
     notificationReason = claim.reason;
+    notified = claim.state === "sent";
   } else if (!assessment.material) {
+    notificationState = "unchanged";
     notificationReason = "unchanged";
   } else if (error) {
+    notificationState = "skipped";
     notificationReason = error;
   }
   const last = {
@@ -226,6 +235,7 @@ export async function runMarketWatch(opts: {
     ...assessment,
     taskId,
     notified,
+    notificationState,
     notificationReason,
     marketOpen: snapshot.marketOpen,
     error,

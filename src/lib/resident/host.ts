@@ -86,6 +86,9 @@ export interface ResidentHostOptions {
   goalDispatchEveryMs?: number;
   taskReclaimEveryMs?: number;
   guardianEveryMs?: number;
+  notifyEveryMs?: number;
+  /** Periodic gateway heartbeat. Independent of /healthz and /api/gateway/status. */
+  heartbeatEveryMs?: number;
   now?: () => number;
 }
 
@@ -107,6 +110,8 @@ export class ResidentHost {
       | "goalDispatchEveryMs"
       | "taskReclaimEveryMs"
       | "guardianEveryMs"
+      | "notifyEveryMs"
+      | "heartbeatEveryMs"
     >
   > & { healthPort: number | null; exit: (code: number) => void; now: () => number };
   private startedAt = 0;
@@ -133,6 +138,8 @@ export class ResidentHost {
       goalDispatchEveryMs: options.goalDispatchEveryMs ?? 30_000,
       taskReclaimEveryMs: options.taskReclaimEveryMs ?? 45_000,
       guardianEveryMs: options.guardianEveryMs ?? 120_000,
+      notifyEveryMs: options.notifyEveryMs ?? 15_000,
+      heartbeatEveryMs: options.heartbeatEveryMs ?? 30_000,
       now: options.now ?? (() => Date.now()),
     };
   }
@@ -184,12 +191,7 @@ export class ResidentHost {
     );
 
     this.startTickPublishers();
-    const { recordGatewayHeartbeat } = await import("@/lib/gateway/runtime");
-    await recordGatewayHeartbeat(this.bus.backend).catch((err) => {
-      log.error("gateway heartbeat failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
+    this.startHeartbeat();
     if (this.opts.healthPort != null) await this.startHealthServer(this.opts.healthPort);
     log.info("resident host started", {
       backend: this.bus.backend,
@@ -244,7 +246,26 @@ export class ResidentHost {
     schedule(this.opts.goalDispatchEveryMs, "goal_dispatch");
     schedule(this.opts.taskReclaimEveryMs, "task_reclaim");
     schedule(this.opts.guardianEveryMs, "guardian");
+    schedule(this.opts.notifyEveryMs, "notify_delivery");
     if (this.opts.maxUptimeMs > 0) schedule(60_000, "restart_check");
+  }
+
+  /** Writes the gateway heartbeat on a timer. Health probes do not own this. */
+  private startHeartbeat(): void {
+    const beat = () => {
+      void import("@/lib/gateway/runtime")
+        .then(({ recordGatewayHeartbeat }) => recordGatewayHeartbeat(this.bus.backend, this.opts.now()))
+        .catch((err) => {
+          log.error("gateway heartbeat failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+    };
+    beat();
+    if (this.opts.heartbeatEveryMs <= 0) return;
+    const timer = setInterval(beat, this.opts.heartbeatEveryMs);
+    timer.unref?.();
+    this.timers.push(timer);
   }
 
   private maybeSelfRestart(): void {
@@ -260,12 +281,7 @@ export class ResidentHost {
   async health(): Promise<HealthSnapshot & { gateway?: unknown }> {
     const depth = await this.bus.depth();
     const warm = this.warm.loaded() ? this.warm.get() : null;
-    const { recordGatewayHeartbeat, buildGatewayStatusSafe } = await import("@/lib/gateway/healthHook");
-    await recordGatewayHeartbeat(this.bus.backend).catch((err) => {
-      log.error("gateway heartbeat failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
+    const { buildGatewayStatusSafe } = await import("@/lib/gateway/healthHook");
     const gateway = await buildGatewayStatusSafe({
       uptimeMs: this.opts.now() - this.startedAt,
       queueBackend: this.bus.backend,

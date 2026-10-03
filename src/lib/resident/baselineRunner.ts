@@ -116,6 +116,8 @@ export class BaselineRunner implements AgentRunner {
         return (await import("@/lib/gateway/runtime")).runTaskReclaimTick();
       case "guardian":
         return (await import("@/lib/gateway/runtime")).runGuardianTick();
+      case "notify_delivery":
+        return (await import("@/lib/gateway/runtime")).runNotificationDeliveryTick();
       case "restart_check":
         // Owned by the host itself; reaching here is a routing bug.
         log.warn("restart_check reached the runner");

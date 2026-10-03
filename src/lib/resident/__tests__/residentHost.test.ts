@@ -89,6 +89,49 @@ before(async () => {
 });
 
 describe("resident host", () => {
+  it("heartbeats on its own timer without a health request", async () => {
+    const bus = newBus();
+    const host = newHost({
+      bus,
+      runner: new WarmEchoRunner(),
+      healthPort: null,
+      maxUptimeMs: 0,
+      sweepEveryMs: 0,
+      candleSyncEveryMs: 0,
+      entitlementSweepEveryMs: 0,
+      marketWatchEveryMs: 0,
+      goalDispatchEveryMs: 0,
+      taskReclaimEveryMs: 0,
+      guardianEveryMs: 0,
+      notifyEveryMs: 0,
+      heartbeatEveryMs: 40,
+    });
+    await host.start();
+    const runtime = await import("@/lib/gateway/runtime");
+    const first = await runtime.readGatewayHeartbeat();
+    assert.ok(first);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const second = await runtime.readGatewayHeartbeat();
+    assert.ok(second);
+    assert.ok(second.at >= first.at);
+    assert.equal(await runtime.gatewayHeartbeatFresh(second.at + 1_000), true);
+    await host.shutdown("heartbeat-test");
+    assert.equal(runtime.heartbeatIsFresh(second.at, second.at + 200_000), false);
+    const sweep = await import("@/app/api/cron/recommendation-sweep/route");
+    const { NextRequest } = await import("next/server");
+    process.env.CRON_SECRET = "resident-cron-secret";
+    await runtime.recordGatewayHeartbeat("memory", Date.now());
+    const live = await sweep.POST(
+      new NextRequest("http://localhost/api/cron/recommendation-sweep", {
+        method: "POST",
+        headers: { authorization: "Bearer resident-cron-secret" },
+      }),
+    );
+    const body = (await live.json()) as { skipped?: boolean; reason?: string };
+    assert.equal(body.skipped, true);
+    assert.equal(body.reason, "gateway_authoritative");
+  });
+
   it("answers a user_message event from warm state through the channel sender", async () => {
     const bus = newBus();
     const runner = new WarmEchoRunner();

@@ -188,24 +188,50 @@ export async function cancelGoal(id: string): Promise<AgentGoal | null> {
 
 export async function updateGoalMemory(
   id: string,
-  patch: { summary?: string; latestFindings?: string; lastAction?: string; fingerprint?: string | null },
+  patch: {
+    summary?: string;
+    latestFindings?: string;
+    lastAction?: string;
+    fingerprint?: string | null;
+    nextCheckAt?: string | null;
+  },
 ): Promise<void> {
   const now = nowIso();
   const current = await getGoal(id);
   if (!current) return;
+  const nextCheck = patch.nextCheckAt === undefined ? current.nextCheckAt : patch.nextCheckAt;
   await execute(
     `UPDATE agent_goals
-     SET summary = ?, latest_findings = ?, last_action = ?, fingerprint = ?, updated_at = ?
+     SET summary = ?, latest_findings = ?, last_action = ?, fingerprint = ?,
+         next_check_at = ?, updated_at = ?
      WHERE id = ?`,
     [
       patch.summary ?? current.summary,
       patch.latestFindings ?? current.latestFindings,
       patch.lastAction ?? current.lastAction,
       patch.fingerprint === undefined ? current.fingerprint : patch.fingerprint,
+      nextCheck,
       now,
       id,
     ],
   );
+  if (nextCheck) {
+    await execute(
+      "UPDATE agent_schedules SET next_run_at = ?, updated_at = ? WHERE goal_id = ?",
+      [nextCheck, now, id],
+    );
+  }
+}
+
+/** Compact memory the next task for this goal should read instead of starting blank. */
+export function goalMemorySnapshot(goal: AgentGoal): Record<string, unknown> {
+  return {
+    summary: goal.summary,
+    latestFindings: goal.latestFindings,
+    lastAction: goal.lastAction,
+    fingerprint: goal.fingerprint,
+    nextCheckAt: goal.nextCheckAt,
+  };
 }
 
 export function goalCadenceMs(goal: AgentGoal): number {
@@ -238,7 +264,7 @@ export async function dispatchDueGoals(now = Date.now()): Promise<number> {
       role: roleForGoal(goal.kind),
       objective: goal.objective,
       idempotencyKey: `goal:${goal.id}:${slot}`,
-      input: { kind: goal.kind, title: goal.title },
+      input: { kind: goal.kind, title: goal.title, goalMemory: goalMemorySnapshot(goal) },
     });
     const next = new Date(now + goalCadenceMs(goal)).toISOString();
     await execute(

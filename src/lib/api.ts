@@ -108,22 +108,18 @@ export async function requireAdmin(): Promise<PublicUser> {
  */
 export async function requirePaidAccess(): Promise<PublicUser> {
   const user = await requirePlatformAccess();
-  const { ensureOwner, getOwnerId } = await import("./ownerIdentity");
-  const ownerId = await getOwnerId();
-  if (ownerId != null && user.id === ownerId) {
-    await ensureOwner();
-    return user;
+  const { ensureOwner, resolveOwner } = await import("./ownerIdentity");
+  const resolved = await resolveOwner();
+  if (!resolved.ok) {
+    const { OwnerAmbiguousError, OwnerMissingError } = await import("./ownerIdentity");
+    if (resolved.reason === "ambiguous") throw new OwnerAmbiguousError();
+    throw new OwnerMissingError();
   }
-  if (ownerId != null && user.id !== ownerId) {
+  if (user.id !== resolved.id) {
     throw new ApiError(403, "This private agent belongs to its owner.");
   }
-  const { getEntitlementForUser } = await import("@/lib/subscription/entitlement");
-  const ent = await getEntitlementForUser(user);
-  if (ent.access !== "blocked") return user;
-  const { presentAccessBlock } = await import("@/lib/billing/refusal");
-  const { resolveUserLocale } = await import("@/lib/i18n/userLocale");
-  const view = presentAccessBlock(await resolveUserLocale(user.id), ent.planStatus);
-  throw new ApiError(403, view.message);
+  await ensureOwner();
+  return user;
 }
 
 export function handleError(err: unknown): NextResponse {
@@ -142,6 +138,18 @@ export function handleError(err: unknown): NextResponse {
     return NextResponse.json(
       { error: ownerErr.message || "OWNER_ONLY", code: "OWNER_ONLY" },
       { status: 403 },
+    );
+  }
+  if (
+    err &&
+    typeof err === "object" &&
+    "name" in err &&
+    (err as { name?: string }).name === "OwnerAmbiguousError"
+  ) {
+    const ambiguous = err as { message?: string };
+    return NextResponse.json(
+      { error: ambiguous.message || "OWNER_AMBIGUOUS", code: "OWNER_AMBIGUOUS" },
+      { status: 503 },
     );
   }
   if (

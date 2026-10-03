@@ -100,6 +100,48 @@ export function ControlCenter({ initial }: { initial: GatewayStatus }) {
           active {status?.goals?.active ?? 0} · paused {status?.goals?.paused ?? 0} · failed{" "}
           {status?.goals?.failed ?? 0}
         </p>
+        <ul className="mt-3 space-y-2 text-sm">
+          {(status?.goalItems ?? []).length === 0 ? <li>{t("control.empty")}</li> : null}
+          {(status?.goalItems ?? []).map((goal) => (
+            <li key={goal.id} className="flex flex-wrap items-center justify-between gap-2">
+              <span>
+                {goal.status} · {goal.title}
+              </span>
+              <span className="flex gap-2">
+                {goal.status === "active" ? (
+                  <button
+                    type="button"
+                    className="rounded-full border px-2 py-0.5 text-xs"
+                    disabled={busy}
+                    onClick={() => void post("/api/gateway/goals", { action: "pause", id: goal.id })}
+                  >
+                    {t("control.pause")}
+                  </button>
+                ) : null}
+                {goal.status === "paused" ? (
+                  <button
+                    type="button"
+                    className="rounded-full border px-2 py-0.5 text-xs"
+                    disabled={busy}
+                    onClick={() => void post("/api/gateway/goals", { action: "resume", id: goal.id })}
+                  >
+                    {t("control.resume")}
+                  </button>
+                ) : null}
+                {goal.status === "active" || goal.status === "paused" ? (
+                  <button
+                    type="button"
+                    className="rounded-full border px-2 py-0.5 text-xs"
+                    disabled={busy}
+                    onClick={() => void post("/api/gateway/goals", { action: "cancel", id: goal.id })}
+                  >
+                    {t("control.cancel")}
+                  </button>
+                ) : null}
+              </span>
+            </li>
+          ))}
+        </ul>
       </section>
 
       <section className="rounded-xl border p-4">
@@ -154,6 +196,48 @@ export function ControlCenter({ initial }: { initial: GatewayStatus }) {
             {t("control.failures")}: {(status?.failures ?? []).join(", ") || t("control.empty")}
           </p>
         </div>
+      </section>
+
+      <section className="rounded-xl border p-4">
+        <h2 className="font-medium">{t("control.runs")}</h2>
+        <ul className="mt-2 space-y-1 text-sm">
+          {(status?.recentRuns ?? []).length === 0 ? <li>{t("control.empty")}</li> : null}
+          {(status?.recentRuns ?? []).map((run) => (
+            <li key={run.id}>
+              {run.status} #{run.attempt} {run.summary ?? run.taskId.slice(0, 8)}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="rounded-xl border p-4">
+        <h2 className="font-medium">{t("control.approvals")}</h2>
+        <ul className="mt-2 space-y-2 text-sm">
+          {(status?.approvals ?? []).length === 0 ? <li>{t("control.empty")}</li> : null}
+          {(status?.approvals ?? []).map((row) => (
+            <li key={row.id} className="flex flex-wrap items-center gap-2">
+              <span>
+                {row.toolName} — {row.reason}
+              </span>
+              <button
+                type="button"
+                className="rounded-full border px-2 py-0.5"
+                disabled={busy}
+                onClick={() => void post("/api/gateway/approvals", { id: row.id, action: "approve" })}
+              >
+                {t("control.approve")}
+              </button>
+              <button
+                type="button"
+                className="rounded-full border px-2 py-0.5"
+                disabled={busy}
+                onClick={() => void post("/api/gateway/approvals", { id: row.id, action: "reject" })}
+              >
+                {t("control.reject")}
+              </button>
+            </li>
+          ))}
+        </ul>
       </section>
     </div>
   );

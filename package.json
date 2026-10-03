@@ -34,7 +34,7 @@
     "test:redis-release": "tsx scripts/validate-redis-release.ts",
     "verify:github": "tsx scripts/verify-github.ts",
     "test:live": "echo \"No live external-provider tests are enabled by default. Set the relevant provider env (e.g. OPENAI_API_KEY, MT5_BRIDGE_URL) and run the targeted suite.\" && exit 0",
-    "test:gateway": "tsx --test --test-concurrency=1 --test-force-exit src/lib/gateway/__tests__/*.test.ts",
+    "test:gateway": "tsx --test --test-concurrency=1 --test-force-exit src/lib/gateway/__tests__/gateway.test.ts && tsx --test --test-concurrency=1 --test-force-exit src/lib/gateway/__tests__/ownerMigration.test.ts",
     "migrate:single-owner": "tsx scripts/migrate-single-owner.ts",
     "test:ci": "npm run test:gateway && npm run test:resident && npm run test:context && npm run test:memory && npm run test:skills && npm run test:tools && npm run test:trace && npm run test:research && npm run test:recommendations && npm run test:entry-coherence && npm run test:gates && npm run test:execution && npm run test:guards && npm run test:vision && npm run test:chart-host && npm run test:telegram-parity && npm run test:trading-dna && npm run test:unit && npm run test:decision-authority && npm run test:sweep && npm run test:integration",
     "test:resident": "tsx --test --test-force-exit src/lib/resident/__tests__/*.test.ts",

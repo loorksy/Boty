@@ -7,13 +7,19 @@ into the same owner, the same memory, and the same Gateway.
 
 `src/lib/ownerIdentity.ts` resolves exactly one owner:
 
-1. `AICHART_AGENT_USER_ID` when that user exists
-2. `LONORA_OWNER_EMAIL`, then `ADMIN_EMAIL`
-3. the earliest admin
-4. the earliest user
+1. `AICHART_AGENT_USER_ID` when that user exists. A pin that does not match is an error, not a fallback.
+2. `LONORA_OWNER_EMAIL` when it matches one account.
+3. `ADMIN_EMAIL` when it matches one account.
+4. The only user, when the database contains exactly one account and nothing is pinned.
 
-`getOwnerId()` does not create accounts. `ensureOwner()` promotes that row to
-an active admin. `requireOwner()` rejects every other session.
+Several accounts and no matching pin is `OwnerAmbiguousError`. The gateway
+does not promote the earliest admin or the earliest user. Run
+`npm run migrate:single-owner` (dry-run first). `--apply` refuses before any
+write when a unique key would collide, and owner promotion, row remaps, and
+optional suspension commit in one transaction.
+
+`getOwnerId()` does not create accounts. `ensureOwner()` promotes the resolved
+row to an active admin. `requireOwner()` rejects every other session.
 `assertOwnerUserId()` is the check used by Google, Telegram login, and the bot.
 
 Public registration is closed. `isRegistrationOpen()` stays false. The register
@@ -37,6 +43,13 @@ scheduled events on that same bus:
 - `goal_dispatch`
 - `task_reclaim`
 - `guardian`
+- `notify_delivery`
+
+The host writes `gateway_heartbeat` on its own timer (`GATEWAY_HEARTBEAT_MS`,
+default 30s). `/healthz` and `/api/gateway/status` read that flag. They do
+not refresh it. A beat older than `GATEWAY_HEARTBEAT_STALE_MS` (default 180s)
+lets the external cron watchdog run. The guardian reuses one
+`system_guardian` row and updates it only when the failure signature changes.
 
 ## 3. Event flow
 
@@ -54,7 +67,7 @@ Tables (created for SQLite and Postgres in `src/lib/gateway/schema.ts`):
 
 - `agent_goals` — active, paused, completed, failed, cancelled
 - `agent_tasks` — queued, claimed, running, waiting, waiting_for_approval, completed, failed, cancelled
-- `agent_task_runs` — recorded attempts
+- `agent_task_runs` — one row per attempt. A retry inserts another row.
 - `agent_schedules` — cadence
 - `agent_approvals` — external-write holds
 - `agent_subagents` — one row per delegation
@@ -92,8 +105,10 @@ widen the tool allowlist.
 `src/lib/gateway/permissions.ts` classes tools as READ, INTERNAL_WRITE,
 NOTIFY, EXTERNAL_WRITE, or TRADE_EXECUTION. Trade tools throw
 `TradeBoundaryError` even if a caller adds them to an allowlist.
-EXTERNAL_WRITE requires an explicit policy flag and is not granted to
-sub-agents. NOTIFY requires `allowNotify`. External content is wrapped as
+EXTERNAL_WRITE is not granted to sub-agents. A task that needs one enters
+`waiting_for_approval` with an `agent_approvals` row. The owner approves or
+rejects it from the control center. Approval does not run an external adapter
+and cannot authorize a trade tool. NOTIFY requires `allowNotify`. External content is wrapped as
 `<untrusted_data>` and cannot replace the policy object.
 
 ## 8. Memory
@@ -102,7 +117,9 @@ Conversation memory stays in the resident session, chat history, semantic
 memory, and lessons, all keyed by the owner. Channel ids still separate
 transport threads. Goal memory (`summary`, `latest_findings`, `last_action`,
 `next_check_at`) is separate so a long responsibility does not replay the
-transcript.
+transcript. `updateGoalMemory()` writes the summary, latest findings, last
+action, fingerprint, and next check after a goal task finishes. The next
+dispatch puts that snapshot on the new task.
 
 ## 9. Market monitor
 
@@ -110,16 +127,21 @@ transcript.
 recommendations. An unchanged fingerprint does not enqueue analysis or a
 notification. A closed market never counts as a live price move and does not
 start a deep task. A material open-market change enqueues one
-`structure_analyst` task keyed by the fingerprint. `GATEWAY_DEEP_MODEL=1` is
-required before that task is allowed to use a deeper model; the default is
-deterministic specialist code.
+`structure_analyst` task keyed by the fingerprint. `GATEWAY_DEEP_MODEL=1`
+is the only switch that lets that task call the deep model through `callLLM`.
+The call is metered on `usage_events` and stopped when it exceeds the task
+token budget. Unset or `0` keeps the deterministic specialist and does not
+call a model. Claimed delivery is an intent (`pending`), not a sent message.
 
 ## 10. Telegram
 
 Free text still reaches Lonora. `/status`, `/tasks`, `/goals`, `/agents`,
 `/pause`, and `/resume` are mechanical. Proactive notices go through
-`claimNotification()`: one row per dedupe key, an hourly cap
-(`GATEWAY_NOTIFY_MAX_PER_HOUR`, default 6), and a stored reason.
+`claimNotification()` stores one pending row per dedupe key. A delivery tick
+sends it through Telegram, then `markNotificationSent`. A transport failure
+becomes `retry` and later `failed` at `GATEWAY_NOTIFY_MAX_ATTEMPTS`. The
+hourly cap is `GATEWAY_NOTIFY_MAX_PER_HOUR` (default 6). Command text uses
+the owner's account language.
 
 ## 11. Recovery
 

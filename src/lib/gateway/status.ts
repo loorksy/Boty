@@ -4,8 +4,9 @@
 import { releaseIdentity } from "@/lib/version";
 import { getOwnerId } from "@/lib/ownerIdentity";
 import { queryOne } from "@/lib/db";
+import { listPendingApprovals } from "./approvals";
 import { listGoals } from "./goals";
-import { countTasksByStatus, listTasks } from "./tasks";
+import { countTasksByStatus, listTaskRuns, listTasks } from "./tasks";
 import { listSubAgents } from "./subagents";
 import { lastMarketEvent } from "./marketMonitor";
 import { ownerCostSummary } from "./costs";
@@ -22,6 +23,7 @@ export interface GatewayStatus {
   redis: { configured: boolean; required: boolean };
   tasks: Record<string, number>;
   goals: { active: number; paused: number; completed: number; failed: number; cancelled: number };
+  goalItems: Array<{ id: string; title: string; status: string }>;
   subagents: Array<{ id: string; role: string; status: string; objective: string; createdAt: string; finishedAt: string | null }>;
   market: Record<string, unknown> | null;
   openRecommendations: number | null;
@@ -29,6 +31,8 @@ export interface GatewayStatus {
   providers: { openai: boolean; anthropic: boolean };
   paused: boolean;
   recentTasks: Array<{ id: string; role: string; status: string; error: string | null; updatedAt: string }>;
+  recentRuns: Array<{ id: string; taskId: string; status: string; attempt: number; summary: string | null; startedAt: string; finishedAt: string | null }>;
+  approvals: Array<{ id: string; taskId: string | null; toolName: string | null; reason: string; status: string }>;
   failures: string[];
 }
 
@@ -53,6 +57,8 @@ export async function buildGatewayStatus(input: {
     return {};
   });
   const recent = await listTasks({ limit: 8 }).catch(() => []);
+  const runs = await listTaskRuns(undefined, 8).catch(() => []);
+  const approvals = await listPendingApprovals(8).catch(() => []);
   const subs = await listSubAgents(8).catch(() => []);
   const market = await lastMarketEvent().catch(() => null);
   const costs = await ownerCostSummary().catch((err) => {
@@ -97,6 +103,11 @@ export async function buildGatewayStatus(input: {
       failed: goalCount("failed"),
       cancelled: goalCount("cancelled"),
     },
+    goalItems: goals.slice(0, 8).map((goal) => ({
+      id: goal.id,
+      title: goal.title,
+      status: goal.status,
+    })),
     subagents: subs.map((row) => ({
       id: row.id,
       role: row.role,
@@ -119,6 +130,22 @@ export async function buildGatewayStatus(input: {
       status: task.status,
       error: task.error,
       updatedAt: task.updatedAt,
+    })),
+    recentRuns: runs.map((run) => ({
+      id: run.id,
+      taskId: run.taskId,
+      status: run.status,
+      attempt: run.attempt,
+      summary: run.summary,
+      startedAt: run.startedAt,
+      finishedAt: run.finishedAt,
+    })),
+    approvals: approvals.map((row) => ({
+      id: row.id,
+      taskId: row.taskId,
+      toolName: row.toolName,
+      reason: row.reason,
+      status: row.status,
     })),
     failures,
   };

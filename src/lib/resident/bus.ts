@@ -178,11 +178,20 @@ export class RedisStreamBus implements EventBus {
   private active = 0;
   private loop: Promise<void> | null = null;
 
-  constructor(opts?: { url?: string; stream?: string; group?: string; consumer?: string }) {
+  private readonly reclaimMinIdleMs: number;
+
+  constructor(opts?: {
+    url?: string;
+    stream?: string;
+    group?: string;
+    consumer?: string;
+    reclaimMinIdleMs?: number;
+  }) {
     this.url = opts?.url ?? process.env.REDIS_URL ?? "";
     this.stream = opts?.stream ?? RESIDENT_STREAM;
     this.group = opts?.group ?? RESIDENT_GROUP;
     this.consumer = opts?.consumer ?? `host-${process.pid}`;
+    this.reclaimMinIdleMs = opts?.reclaimMinIdleMs ?? RECLAIM_MIN_IDLE_MS;
     if (!this.url) throw new Error("RedisStreamBus requires REDIS_URL");
   }
 
@@ -303,7 +312,7 @@ export class RedisStreamBus implements EventBus {
             this.stream,
             this.group,
             this.consumer,
-            String(RECLAIM_MIN_IDLE_MS),
+            String(this.reclaimMinIdleMs),
             cursor,
             "COUNT",
             "16",

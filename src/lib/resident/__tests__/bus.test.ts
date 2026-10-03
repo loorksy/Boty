@@ -77,44 +77,121 @@ test("memory bus validates events at publish", async () => {
   );
 });
 
-test("redis streams round-trip: publish → consume → ack (skipped without Redis)", async (t) => {
+async function requireRedis(): Promise<string> {
   const url = process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
-  let reachable = false;
+  const { default: IORedis } = await import("ioredis");
+  const probe = new IORedis(url, { maxRetriesPerRequest: 1, lazyConnect: true, connectTimeout: 1_000 });
   try {
-    const { default: IORedis } = await import("ioredis");
-    const probe = new IORedis(url, { maxRetriesPerRequest: 1, lazyConnect: true, connectTimeout: 500 });
-    try {
-      await probe.connect();
-      await probe.ping();
-      reachable = true;
-    } finally {
-      probe.disconnect();
-    }
-  } catch {
-    reachable = false;
+    await probe.connect();
+    await probe.ping();
+    return url;
+  } finally {
+    probe.disconnect();
   }
-  if (!reachable) {
-    t.skip("no reachable Redis");
-    return;
-  }
+}
 
-  const stream = `lonora:test:${Date.now()}`;
-  const bus = new RedisStreamBus({ url, stream, group: "test-group", consumer: "t1" });
-  const got: ResidentEvent[] = [];
-  await bus.start(
-    async ({ event }) => {
-      got.push(event);
-    },
-    { concurrency: 2 },
-  );
-  await bus.publish(tick());
+async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 5_000): Promise<void> {
   const started = Date.now();
-  while (got.length < 1 && Date.now() - started < 5_000) {
-    await new Promise((r) => setTimeout(r, 50));
+  while (!(await predicate())) {
+    if (Date.now() - started > timeoutMs) throw new Error("timed out waiting for redis bus");
+    await new Promise((r) => setTimeout(r, 30));
   }
-  assert.equal(got.length, 1);
-  assert.equal(got[0]!.kind, "scheduled_tick");
-  const depth = await bus.depth();
-  assert.equal(depth.pending, 0);
-  await bus.stop();
+}
+
+test("redis streams: group, dedupe, restart, reclaim, and dead-letter", async () => {
+  const url = await requireRedis();
+  const { default: IORedis } = await import("ioredis");
+  const admin = new IORedis(url, { maxRetriesPerRequest: 1 });
+  const previousMax = process.env.GATEWAY_EVENT_MAX_ATTEMPTS;
+  try {
+    const stream = `lonora:test:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+    const group = "lonora-host";
+    process.env.GATEWAY_EVENT_MAX_ATTEMPTS = "5";
+
+    const parked = new RedisStreamBus({ url, stream, group, consumer: "down" });
+    const event: ResidentEvent = {
+      kind: "scheduled_tick",
+      tick: "market_watch",
+      enqueuedAt: Date.now(),
+      idempotencyKey: "market-watch-restart-01",
+    };
+    await parked.publish(event);
+    await parked.publish(event);
+    await parked.stop();
+
+    const got: string[] = [];
+    const live = new RedisStreamBus({ url, stream, group, consumer: "restarted" });
+    await live.start(
+      async ({ event: delivered }) => {
+        got.push(delivered.idempotencyKey ?? delivered.kind);
+      },
+      { concurrency: 1 },
+    );
+    await waitFor(() => got.length >= 1);
+    assert.equal(got.length, 1, "a duplicate idempotency key must not run twice");
+    const groups = (await admin.xinfo("GROUPS", stream)) as unknown[];
+    assert.ok(groups.length >= 1, "consumer group exists");
+    await live.stop();
+
+    const reclaimStream = `${stream}:reclaim`;
+    let firstAttempts = 0;
+    const holder = new RedisStreamBus({
+      url,
+      stream: reclaimStream,
+      group,
+      consumer: "holder",
+      reclaimMinIdleMs: 40,
+    });
+    await holder.start(
+      async () => {
+        firstAttempts += 1;
+        throw new Error("worker stopped mid-task");
+      },
+      { concurrency: 1 },
+    );
+    await holder.publish({ kind: "scheduled_tick", tick: "goal_dispatch", enqueuedAt: Date.now() });
+    await waitFor(() => firstAttempts >= 1);
+    await holder.stop();
+    await new Promise((r) => setTimeout(r, 80));
+
+    const reclaimed: number[] = [];
+    const heir = new RedisStreamBus({
+      url,
+      stream: reclaimStream,
+      group,
+      consumer: "heir",
+      reclaimMinIdleMs: 40,
+    });
+    await heir.start(
+      async ({ attempt }) => {
+        reclaimed.push(attempt);
+      },
+      { concurrency: 1 },
+    );
+    await waitFor(() => reclaimed.length >= 1);
+    assert.ok(reclaimed[0]! >= 2, "XAUTOCLAIM delivers the pending entry to the new consumer");
+    await heir.stop();
+
+    process.env.GATEWAY_EVENT_MAX_ATTEMPTS = "1";
+    const deadStream = `${stream}:dead`;
+    const poison = new RedisStreamBus({ url, stream: deadStream, group, consumer: "poison" });
+    await poison.start(
+      async () => {
+        throw new Error("poison task");
+      },
+      { concurrency: 1 },
+    );
+    await poison.publish({ kind: "scheduled_tick", tick: "guardian", enqueuedAt: Date.now() });
+    await waitFor(async () => {
+      const len = await admin.xlen(`${deadStream}:dead`);
+      return Number(len) >= 1;
+    });
+    const dead = await admin.xlen(`${deadStream}:dead`);
+    assert.ok(Number(dead) >= 1, "poison events move to the dead-letter stream");
+    await poison.stop();
+  } finally {
+    if (previousMax === undefined) delete process.env.GATEWAY_EVENT_MAX_ATTEMPTS;
+    else process.env.GATEWAY_EVENT_MAX_ATTEMPTS = previousMax;
+    admin.disconnect();
+  }
 });

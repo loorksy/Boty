@@ -39,6 +39,16 @@ export async function POST(req: NextRequest) {
   let release: (() => void) | null = null;
   try {
     const user = await requirePlatformAccess();
+    const body = webChatBodySchema.parse(await req.json());
+    const locale = body.locale ?? "ar";
+    const requestId = newId();
+
+    // A standing responsibility is durable even when this turn cannot run
+    // the model. The worker absorbs the same sentence again; that is idempotent.
+    const { absorbResponsibilityUtterance } = await import("@/lib/gateway/responsibility");
+    await absorbResponsibilityUtterance({ ownerId: user.id, text: body.message }).catch((err: unknown) => {
+      console.error("chat responsibility failed", err instanceof Error ? err.message : err);
+    });
 
     if (!(await isLLMConfiguredAsync())) {
       return NextResponse.json(
@@ -46,10 +56,6 @@ export async function POST(req: NextRequest) {
         { status: 503 },
       );
     }
-
-    const body = webChatBodySchema.parse(await req.json());
-    const locale = body.locale ?? "ar";
-    const requestId = newId();
 
     // THE gate — the only thing that decides whether this turn may run.
     // There was a second, older gate in front of it whose message was

@@ -74,6 +74,7 @@ export const scheduledTickEventSchema = z.object({
     "goal_dispatch",
     "task_reclaim",
     "guardian",
+    "notify_delivery",
   ]),
   enqueuedAt: z.number().int().positive(),
   idempotencyKey: z.string().min(8).max(200).optional(),

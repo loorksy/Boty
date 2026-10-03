@@ -34,7 +34,10 @@ function ping(path: string, preferBeacon: boolean): void {
 export function VisitorBeacon() {
   const pathname = usePathname() ?? "/";
   const pathRef = useRef(pathname);
-  pathRef.current = pathname;
+
+  useEffect(() => {
+    pathRef.current = pathname;
+  }, [pathname]);
 
   useEffect(() => {
     const send = (beacon: boolean) => {

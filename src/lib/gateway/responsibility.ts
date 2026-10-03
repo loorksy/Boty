@@ -71,6 +71,14 @@ export async function absorbResponsibilityUtterance(input: {
 }): Promise<{ created: boolean; goalId?: string }> {
   const interpreted = interpretResponsibility(input.text);
   if (!interpreted) return { created: false };
+  const { queryOne } = await import("@/lib/db");
+  const existing = await queryOne<{ id: string }>(
+    `SELECT id FROM agent_goals
+     WHERE owner_id = ? AND objective = ? AND status IN ('active', 'paused')
+     ORDER BY created_at ASC LIMIT 1`,
+    [input.ownerId, interpreted.objective],
+  );
+  if (existing) return { created: false, goalId: existing.id };
   const goal = await createGoal({
     ownerId: input.ownerId,
     title: interpreted.title,

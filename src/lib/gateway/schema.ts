@@ -62,6 +62,7 @@ const STATEMENTS = [
     error TEXT,
     tokens INTEGER NOT NULL DEFAULT 0,
     cost_usd REAL NOT NULL DEFAULT 0,
+    attempt INTEGER NOT NULL DEFAULT 1,
     started_at TEXT NOT NULL,
     finished_at TEXT
   )`,
@@ -118,7 +119,8 @@ const STATEMENTS = [
     goal_id TEXT,
     task_id TEXT,
     created_at TEXT NOT NULL,
-    sent_at TEXT
+    sent_at TEXT,
+    next_attempt_at TEXT
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_gateway_notifications_dedupe ON gateway_notifications(dedupe_key)`,
   `CREATE INDEX IF NOT EXISTS idx_gateway_notifications_recent ON gateway_notifications(owner_id, created_at)`,
@@ -129,6 +131,21 @@ const STATEMENTS = [
   )`,
 ];
 
+const COLUMN_ALTERS = [
+  "ALTER TABLE agent_task_runs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1",
+  "ALTER TABLE gateway_notifications ADD COLUMN next_attempt_at TEXT",
+];
+
+async function applyAlter(run: (sql: string) => Promise<unknown>, sql: string): Promise<void> {
+  try {
+    await run(sql);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/duplicate column|already exists/i.test(message)) return;
+    throw err;
+  }
+}
+
 export async function ensureGatewaySchema(): Promise<void> {
   const { getDbBackend } = await import("@/lib/db");
   const backend = getDbBackend();
@@ -137,10 +154,16 @@ export async function ensureGatewaySchema(): Promise<void> {
     for (const statement of STATEMENTS) {
       await pgExecute(adaptSql(statement, "postgres"));
     }
+    for (const statement of COLUMN_ALTERS) {
+      await applyAlter((sql) => pgExecute(adaptSql(sql, "postgres")), statement);
+    }
     return;
   }
   const { sqliteExecute } = await import("@/lib/db/sqlite");
   for (const statement of STATEMENTS) {
     await sqliteExecute(statement);
+  }
+  for (const statement of COLUMN_ALTERS) {
+    await applyAlter((sql) => sqliteExecute(sql), statement);
   }
 }
