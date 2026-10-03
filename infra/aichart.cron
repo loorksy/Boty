@@ -1,4 +1,10 @@
 # AiChart scheduled jobs — install to /etc/cron.d/aichart
+#
+# Agent work is owned by the resident Gateway (aichart-worker). The curls below
+# for event-monitor, recommendation-sweep, and gold-candles are watchdogs: when
+# the gateway heartbeat is fresh they return skipped/gateway_authoritative and
+# do not run a second copy. case-memory and tradability-calibration stay here
+# because the gateway does not schedule them.
 # Replace YOUR_DOMAIN and YOUR_CRON_SECRET before deploying.
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin

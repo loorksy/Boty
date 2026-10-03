@@ -1,40 +1,28 @@
-import { redirect } from "next/navigation";
+import Link from "next/link";
 import { headers } from "next/headers";
-import AuthForm from "@/components/AuthForm";
 import { PublicChrome } from "@/components/landing/PublicChrome";
-import { getTelegramLoginConfig } from "@/lib/telegram";
-import { isSingleUserMode } from "@/lib/agentAuth";
-import { detectCountryFromHeaders } from "@/lib/geoCountry";
-import { googleAuthConfig } from "@/lib/auth/googleOidc";
 import { isRegistrationOpen } from "@/lib/auth/registration";
-import { initDb } from "@/lib/db";
+import { detectLocale, t } from "@/lib/i18n";
 import { pageMetadata } from "@/lib/seo";
 
 export const metadata = pageMetadata("signup");
 
 export default async function SignupPage() {
-  if (isSingleUserMode()) redirect("/login");
-
   const h = await headers();
-  const defaultCountry = detectCountryFromHeaders(h);
-  await initDb();
-  const [{ telegramConfigured, botUsername }, google, registrationOpen] =
-    await Promise.all([
-      getTelegramLoginConfig(),
-      googleAuthConfig(),
-      isRegistrationOpen(),
-    ]);
-
+  const locale = detectLocale(h.get("accept-language"));
+  const registrationOpen = await isRegistrationOpen();
   return (
     <PublicChrome skipTargetId="auth-main" registrationOpen={registrationOpen}>
-      <AuthForm
-        mode="register"
-        botUsername={botUsername}
-        telegramConfigured={telegramConfigured}
-        googleConfigured={google != null}
-        defaultCountry={defaultCountry}
-        registrationOpen={registrationOpen}
-      />
+      <main id="auth-main" className="mx-auto max-w-lg px-6 py-16 text-center">
+        <h1 className="text-2xl font-semibold text-white">{t(locale, "signup.closed_title")}</h1>
+        <p className="mt-3 text-white/70">{t(locale, "signup.closed_body")}</p>
+        <Link
+          href="/login"
+          className="mt-8 inline-flex min-h-10 items-center rounded-full border border-white/20 px-5 text-sm text-white"
+        >
+          {t(locale, "signup.go_login")}
+        </Link>
+      </main>
     </PublicChrome>
   );
 }

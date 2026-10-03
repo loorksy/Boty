@@ -33,6 +33,7 @@ export const APP_NAV: NavItem[] = [
   { href: "/chat", labelKey: "nav.workspace", icon: Bot, exact: true },
   { href: "/recommendations", labelKey: "nav.recommendations", icon: NotebookPen },
   { href: "/performance", labelKey: "nav.performance", icon: BarChart3 },
+  { href: "/control", labelKey: "nav.control", icon: Activity },
 ];
 
 export type AccessTier = "admin" | "full" | "trial" | "blocked";

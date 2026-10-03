@@ -33,6 +33,12 @@ git clone https://github.com/loorksy/AiChart.git /opt/aichart
 bash /opt/aichart/infra/vps-fresh-install.sh
 ```
 
+The worker process is the Lonora Agent Gateway. Production requires `REDIS_URL`.
+pm2 `autorestart` brings it back after a crash. Goals and tasks live in the
+database; events live in Redis Streams, so a reboot does not drop them.
+Register the owner with `ADMIN_EMAIL` / `ADMIN_PASSWORD` or `LONORA_OWNER_EMAIL`.
+Public registration stays closed. See `docs/AGENT_GATEWAY.md`.
+
 كلمة مرور الأدمن المولَّدة تُكتب مرة واحدة في `/root/aichart-admin-bootstrap.txt`
 بصلاحية 600. لفرض بريد وكلمة مرور من البداية:
 

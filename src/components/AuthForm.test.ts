@@ -16,7 +16,8 @@ describe("AuthForm public chrome", () => {
     assert.match(login, /PublicChrome/);
     assert.match(login, /<AuthForm/);
     assert.match(signup, /PublicChrome/);
-    assert.match(signup, /<AuthForm/);
+    assert.match(signup, /pageMetadata\("signup"\)/);
+    assert.doesNotMatch(signup, /<AuthForm/);
   });
 
   test("keeps language switcher and never mounts a theme toggle", () => {

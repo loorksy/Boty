@@ -10,7 +10,7 @@ const read = (rel: string) => readFileSync(resolve(root, rel), "utf8");
 test("APP_NAV is the three product surfaces and nothing else", () => {
   assert.deepEqual(
     APP_NAV.map((i) => i.href),
-    ["/chat", "/recommendations", "/performance"],
+    ["/chat", "/recommendations", "/performance", "/control"],
   );
 });
 

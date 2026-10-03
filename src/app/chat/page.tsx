@@ -1,4 +1,3 @@
-import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getOrCreateChatChartLayout, listChartLayouts } from "@/lib/store";
 import { CHAT_QUERY_KEY, isValidChatId } from "@/lib/chatUrl";
@@ -19,14 +18,9 @@ export default async function ChatPage({
   const user = await getCurrentUser();
   if (!user) return null;
 
-  // An admin's console is the platform console. This route used to render the
-  // trader bridge for them, which mixed an operator workspace into the admin's
-  // landing page; the admin surfaces all live under ?tab= instead.
-  if (user.role === "admin") {
-    redirect("/console/platform?tab=overview");
-  }
-
   await initDb();
+  const { getOwnerId } = await import("@/lib/ownerIdentity");
+  const isOwner = (await getOwnerId()) === user.id;
   const entitlement = await getEntitlementForUser(user);
   const [planPrice, plan] = await Promise.all([getCurrentPlanPrice(), getBillingPlan()]);
   const planFacts = {
@@ -34,7 +28,7 @@ export default async function ChatPage({
     signupGrantCredits: plan.signup_grant_credits,
   };
 
-  if (entitlement.access === "blocked") {
+  if (!isOwner && entitlement.access === "blocked") {
     return (
       <SubscribeClient
         mode="blocked"
