@@ -35,6 +35,10 @@ export async function POST(req: NextRequest) {
   if (!verifyCronSecret(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const { gatewayHeartbeatFresh } = await import("@/lib/gateway/runtime");
+  if (await gatewayHeartbeatFresh()) {
+    return NextResponse.json({ skipped: true, reason: "gateway_authoritative" });
+  }
 
   const outcome = await withLock("cron:recommendation-sweep", SWEEP_LOCK_MS, () =>
     runRecommendationSweep({

@@ -1,5 +1,5 @@
 /**
- * The resident agent process (pm2 app `aichart-worker` / `npm run worker`).
+ * Lonora Agent Gateway process (pm2 app `aichart-worker` / `npm run worker`).
  *
  * No longer a cron executor: one long-lived host boots, loads warm state
  * once, and then wakes on events from the unified queue — user messages,
@@ -27,7 +27,13 @@ import { ResidentAgentRunner } from "./lib/resident/residentAgentRunner";
 const log = createLogger("worker");
 
 async function main(): Promise<void> {
+  if (process.env.NODE_ENV === "production" && !process.env.REDIS_URL?.trim()) {
+    log.error("REDIS_URL is required for the gateway in production");
+    process.exit(1);
+  }
   await initDb();
+  const { ensureOwner } = await import("./lib/ownerIdentity");
+  await ensureOwner();
 
   const host = new ResidentHost({
     bus: createEventBus(),
@@ -35,6 +41,10 @@ async function main(): Promise<void> {
     concurrency: Number(process.env.RESIDENT_CONCURRENCY || 8),
     healthPort: Number(process.env.RESIDENT_HEALTH_PORT || 8791),
     maxUptimeMs: Number(process.env.RESIDENT_MAX_UPTIME_MS || 24 * 60 * 60 * 1000),
+    marketWatchEveryMs: Number(process.env.GATEWAY_MARKET_WATCH_MS || 60_000),
+    goalDispatchEveryMs: Number(process.env.GATEWAY_GOAL_DISPATCH_MS || 30_000),
+    taskReclaimEveryMs: Number(process.env.GATEWAY_TASK_RECLAIM_MS || 45_000),
+    guardianEveryMs: Number(process.env.GATEWAY_GUARDIAN_MS || 120_000),
   });
   // Outbound channels (Telegram today): how user_message events queued by
   // the web process get their replies delivered from this process.

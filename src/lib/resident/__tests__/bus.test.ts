@@ -45,6 +45,30 @@ test("memory bus retries a failed event exactly once", async () => {
   assert.equal(attempts, 2);
 });
 
+test("memory bus collapses a repeated idempotency key", async () => {
+  const bus = new MemoryBus();
+  let handled = 0;
+  await bus.start(
+    async () => {
+      handled += 1;
+    },
+    { concurrency: 1 },
+  );
+  const event: ResidentEvent = {
+    kind: "market_event",
+    event: "fresh_candle",
+    symbol: "XAUUSD",
+    idempotencyKey: "market-fingerprint-01",
+    enqueuedAt: Date.now(),
+  };
+  const first = await bus.publish(event);
+  const second = await bus.publish(event);
+  await bus.idle();
+  assert.equal(first, second);
+  assert.equal(handled, 1);
+  await bus.stop();
+});
+
 test("memory bus validates events at publish", async () => {
   const bus = new MemoryBus();
   await assert.rejects(

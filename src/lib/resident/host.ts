@@ -82,6 +82,10 @@ export interface ResidentHostOptions {
   sweepEveryMs?: number;
   candleSyncEveryMs?: number;
   entitlementSweepEveryMs?: number;
+  marketWatchEveryMs?: number;
+  goalDispatchEveryMs?: number;
+  taskReclaimEveryMs?: number;
+  guardianEveryMs?: number;
   now?: () => number;
 }
 
@@ -94,7 +98,15 @@ export class ResidentHost {
   private readonly opts: Required<
     Pick<
       ResidentHostOptions,
-      "concurrency" | "maxUptimeMs" | "sweepEveryMs" | "candleSyncEveryMs" | "entitlementSweepEveryMs"
+      | "concurrency"
+      | "maxUptimeMs"
+      | "sweepEveryMs"
+      | "candleSyncEveryMs"
+      | "entitlementSweepEveryMs"
+      | "marketWatchEveryMs"
+      | "goalDispatchEveryMs"
+      | "taskReclaimEveryMs"
+      | "guardianEveryMs"
     >
   > & { healthPort: number | null; exit: (code: number) => void; now: () => number };
   private startedAt = 0;
@@ -117,6 +129,10 @@ export class ResidentHost {
       sweepEveryMs: options.sweepEveryMs ?? 5 * 60 * 1000,
       candleSyncEveryMs: options.candleSyncEveryMs ?? 10 * 60 * 1000,
       entitlementSweepEveryMs: options.entitlementSweepEveryMs ?? 60 * 60 * 1000,
+      marketWatchEveryMs: options.marketWatchEveryMs ?? 60_000,
+      goalDispatchEveryMs: options.goalDispatchEveryMs ?? 30_000,
+      taskReclaimEveryMs: options.taskReclaimEveryMs ?? 45_000,
+      guardianEveryMs: options.guardianEveryMs ?? 120_000,
       now: options.now ?? (() => Date.now()),
     };
   }
@@ -168,6 +184,12 @@ export class ResidentHost {
     );
 
     this.startTickPublishers();
+    const { recordGatewayHeartbeat } = await import("@/lib/gateway/runtime");
+    await recordGatewayHeartbeat(this.bus.backend).catch((err) => {
+      log.error("gateway heartbeat failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
     if (this.opts.healthPort != null) await this.startHealthServer(this.opts.healthPort);
     log.info("resident host started", {
       backend: this.bus.backend,
@@ -216,9 +238,12 @@ export class ResidentHost {
     };
     schedule(this.opts.sweepEveryMs, "recommendation_sweep");
     schedule(this.opts.candleSyncEveryMs, "candle_sync");
-    // Billing v3: lapsed subscriptions disconnect their MT5 link (positions
-    // untouched). Hourly is plenty — expiry is a date, not a price.
+    // Broker-link expiry only. Customer subscription sweeps are not a product.
     schedule(this.opts.entitlementSweepEveryMs, "entitlement_sweep");
+    schedule(this.opts.marketWatchEveryMs, "market_watch");
+    schedule(this.opts.goalDispatchEveryMs, "goal_dispatch");
+    schedule(this.opts.taskReclaimEveryMs, "task_reclaim");
+    schedule(this.opts.guardianEveryMs, "guardian");
     if (this.opts.maxUptimeMs > 0) schedule(60_000, "restart_check");
   }
 
@@ -232,9 +257,21 @@ export class ResidentHost {
     void this.shutdown("self-restart").then(() => this.opts.exit(0));
   }
 
-  async health(): Promise<HealthSnapshot> {
+  async health(): Promise<HealthSnapshot & { gateway?: unknown }> {
     const depth = await this.bus.depth();
     const warm = this.warm.loaded() ? this.warm.get() : null;
+    const { recordGatewayHeartbeat, buildGatewayStatusSafe } = await import("@/lib/gateway/healthHook");
+    await recordGatewayHeartbeat(this.bus.backend).catch((err) => {
+      log.error("gateway heartbeat failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+    const gateway = await buildGatewayStatusSafe({
+      uptimeMs: this.opts.now() - this.startedAt,
+      queueBackend: this.bus.backend,
+      queuePending: depth.pending,
+      queueInFlight: this.inFlight,
+    });
     return {
       ok: this.warm.loaded() && !this.stopping,
       startedAt: this.startedAt,
@@ -252,6 +289,7 @@ export class ResidentHost {
           this.opts.maxUptimeMs > 0 &&
           this.opts.now() - this.startedAt >= this.opts.maxUptimeMs,
       },
+      gateway,
     };
   }
 

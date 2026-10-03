@@ -77,6 +77,8 @@ export async function initDb(): Promise<void> {
         );
         await refreshPlatformConfigCacheInternal(sqliteLoadPlatformConfig);
       }
+      const { ensureGatewaySchema } = await import("../gateway/schema");
+      await ensureGatewaySchema();
       _initialized = true;
     })();
   }
