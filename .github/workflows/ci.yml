@@ -1,9 +1,11 @@
 name: CI
 
+# push is unfiltered so this branch runs the workflow file in the commit.
+# The copy on main is still workflow_dispatch only, and pull_request uses that
+# copy to decide whether a run starts.
 on:
   pull_request:
   push:
-    branches: [main, master]
   workflow_dispatch:
 
 jobs:
