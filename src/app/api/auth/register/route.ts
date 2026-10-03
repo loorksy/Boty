@@ -24,7 +24,10 @@ export async function POST(req: NextRequest) {
   try {
     if (isSingleUserMode()) {
       return NextResponse.json(
-        { error: "التسجيل معطّل — المنصة تعمل بوضع المستخدم الواحد." },
+        {
+          error: "التسجيل معطّل — المنصة تعمل بوضع المستخدم الواحد.",
+          code: "REGISTRATION_CLOSED",
+        },
         { status: 403 },
       );
     }

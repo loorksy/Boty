@@ -53,6 +53,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/chat", base));
   } catch (e) {
     if (isRegistrationClosedError(e)) return fail("registration_closed");
+    if (e instanceof Error && e.name === "OwnerAccessError") return fail("not_owner");
     log.error("exchange.failed", {
       error: e instanceof Error ? e.message : String(e),
     });

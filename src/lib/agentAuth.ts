@@ -1,16 +1,7 @@
 import crypto from "crypto";
 import type { NextRequest } from "next/server";
-import { initDb, queryOne } from "./db";
 import { ensureUserDefaults, setFlag } from "./store";
 import { ApiError } from "./api";
-import {
-  accessBlockMessage,
-  getAccessBlockReason,
-  hasPlatformAccess,
-} from "./platformAccess";
-import { needsMcpCredentials } from "./userCredentials";
-import type { UserRow } from "./types";
-import { userRowToPublicUser } from "./userSelect";
 
 /** Flag key holding the timestamp of the agent's last authenticated call. */
 export const AGENT_LAST_SEEN_FLAG = "agent_last_seen";
@@ -24,9 +15,12 @@ export function agentLastSeenFlagKey(userId: number): string {
  * Multi-user: OAuth email + HMAC headers from aichart-mcp.
  */
 
-/** Multi-user is the default; set AICHART_SINGLE_USER=1 for operator-only gate. */
+/**
+ * The product is a private single-owner agent. The historical
+ * AICHART_SINGLE_USER flag is ignored; public multi-user mode is gone.
+ */
 export function isSingleUserMode(): boolean {
-  return process.env.AICHART_SINGLE_USER === "1";
+  return true;
 }
 
 function serviceToken(): string | null {
@@ -62,15 +56,6 @@ export function bridgeUserSig(email: string): string | null {
     .digest("hex");
 }
 
-function verifyBridgeUserSig(email: string, sig: string | null): boolean {
-  const expected = bridgeUserSig(email);
-  if (!expected || !sig?.trim()) return false;
-  const a = Buffer.from(expected, "hex");
-  const b = Buffer.from(sig.trim(), "hex");
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(a, b);
-}
-
 /**
  * Authenticates a bridge request via `Authorization: Bearer <token>` or the
  * `x-agent-token` header. Throws ApiError on failure.
@@ -102,90 +87,33 @@ function touchAgentLastSeen(userId: number): void {
   void setFlag(agentLastSeenFlagKey(userId), iso).catch(() => {});
 }
 
-let cachedAgentUserId: number | null = null;
-
 /**
- * Legacy single-operator id (AICHART_SINGLE_USER=1 or dev only).
+ * The canonical owner id. There is no second agent user.
  */
 export async function resolveAgentUserId(): Promise<number> {
-  if (cachedAgentUserId !== null) return cachedAgentUserId;
-
-  const fromEnv = Number(process.env.AICHART_AGENT_USER_ID);
-  if (Number.isInteger(fromEnv) && fromEnv > 0) {
-    cachedAgentUserId = fromEnv;
-    await ensureUserDefaults(fromEnv);
-    return fromEnv;
-  }
-
-  await initDb();
-  const row = await queryOne(
-    "SELECT id FROM users WHERE role = 'admin' ORDER BY id ASC LIMIT 1",
-  );
-  const id = row ? Number((row as { id: number }).id) : 1;
-  cachedAgentUserId = id;
-  await ensureUserDefaults(id);
-  return id;
+  const { ensureOwner } = await import("./ownerIdentity");
+  const owner = await ensureOwner();
+  await ensureUserDefaults(owner.id);
+  return owner.id;
 }
 
 /**
- * Resolves the MCP OAuth user for bridge calls (multi-user production path).
+ * Service-token authentication, then the canonical owner.
+ * A caller-supplied user id or email cannot select another account.
  */
 export async function resolveBridgeUserId(req: NextRequest): Promise<number> {
   requireAgentAuth(req);
-
-  if (isSingleUserMode()) {
-    const userId = await resolveAgentUserId();
-    touchAgentLastSeen(userId);
-    return userId;
+  const { getOwner } = await import("./ownerIdentity");
+  const owner = await getOwner();
+  const userId = owner?.id ?? (await resolveAgentUserId());
+  const hintedId = req.headers.get("x-aichart-user-id")?.trim();
+  if (hintedId && Number(hintedId) !== userId) {
+    throw new ApiError(403, "MCP resolves only to the owner.");
   }
-
   const email = req.headers.get("x-aichart-user-email")?.trim().toLowerCase();
-  const sig = req.headers.get("x-aichart-user-sig");
-  if (!email) {
-    throw new ApiError(
-      400,
-      "X-Aichart-User-Email مطلوب لطلبات جسر MCP.",
-    );
+  if (email && owner && email !== owner.email.toLowerCase()) {
+    throw new ApiError(403, "MCP resolves only to the owner.");
   }
-  if (!verifyBridgeUserSig(email, sig)) {
-    throw new ApiError(403, "توقيع هوية المستخدم غير صحيح.");
-  }
-
-  await initDb();
-  const row = await queryOne<UserRow>(
-    "SELECT * FROM users WHERE email = ? LIMIT 1",
-    [email],
-  );
-  if (!row) {
-    throw new ApiError(404, "المستخدم غير موجود.");
-  }
-
-  const user = userRowToPublicUser(row);
-  if (needsMcpCredentials(user)) {
-    throw new ApiError(
-      403,
-      "أكمل بريد وكلمة مرور MCP من /complete-profile.",
-    );
-  }
-  if (!hasPlatformAccess(user)) {
-    const reason = getAccessBlockReason(user) ?? "pending";
-    throw new ApiError(403, accessBlockMessage(reason));
-  }
-
-  const { getEntitlementForUser } = await import("@/lib/subscription/entitlement");
-  const entitlement = await getEntitlementForUser(user);
-  // Free accounts reach the bridge like anyone else — the spend gate prices
-  // each operation. Only a blocked account is turned away here.
-  if (entitlement.access === "blocked") {
-    const { presentAccessBlock } = await import("@/lib/billing/refusal");
-    const { resolveUserLocale } = await import("@/lib/i18n/userLocale");
-    const view = presentAccessBlock(
-      await resolveUserLocale(user.id),
-      entitlement.planStatus,
-    );
-    throw new ApiError(403, view.message);
-  }
-
-  touchAgentLastSeen(user.id);
-  return user.id;
+  touchAgentLastSeen(userId);
+  return userId;
 }

@@ -108,6 +108,15 @@ export async function requireAdmin(): Promise<PublicUser> {
  */
 export async function requirePaidAccess(): Promise<PublicUser> {
   const user = await requirePlatformAccess();
+  const { ensureOwner, getOwnerId } = await import("./ownerIdentity");
+  const ownerId = await getOwnerId();
+  if (ownerId != null && user.id === ownerId) {
+    await ensureOwner();
+    return user;
+  }
+  if (ownerId != null && user.id !== ownerId) {
+    throw new ApiError(403, "This private agent belongs to its owner.");
+  }
   const { getEntitlementForUser } = await import("@/lib/subscription/entitlement");
   const ent = await getEntitlementForUser(user);
   if (ent.access !== "blocked") return user;
@@ -123,6 +132,18 @@ export function handleError(err: unknown): NextResponse {
   }
   // Closed public signup: a named, stable 403 so clients never see a 500.
   // Matched by name (not instanceof) so a duplicate module copy still maps.
+  if (
+    err &&
+    typeof err === "object" &&
+    "name" in err &&
+    (err as { name?: string }).name === "OwnerAccessError"
+  ) {
+    const ownerErr = err as { message?: string };
+    return NextResponse.json(
+      { error: ownerErr.message || "OWNER_ONLY", code: "OWNER_ONLY" },
+      { status: 403 },
+    );
+  }
   if (
     err &&
     typeof err === "object" &&

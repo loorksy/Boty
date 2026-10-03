@@ -141,7 +141,11 @@ export async function resolveGoogleUser(claims: GoogleClaims): Promise<{
   );
   if (linked) {
     const user = await getPublicUser(linked.user_id);
-    if (user) return { user, isNew: false };
+    if (user) {
+      const { assertOwnerUserId } = await import("@/lib/ownerIdentity");
+      await assertOwnerUserId(user.id);
+      return { user, isNew: false };
+    }
   }
 
   const byEmail = await queryOne<{ id: number }>(
@@ -154,6 +158,8 @@ export async function resolveGoogleUser(claims: GoogleClaims): Promise<{
       // account — and the email UNIQUE constraint forbids a duplicate one.
       throw new Error("google_email_unverified_conflict");
     }
+    const { assertOwnerUserId } = await import("@/lib/ownerIdentity");
+    await assertOwnerUserId(byEmail.id);
     await linkIdentity(claims, byEmail.id);
     const user = (await getPublicUser(byEmail.id))!;
     log.info("linked.existing", { userId: byEmail.id });

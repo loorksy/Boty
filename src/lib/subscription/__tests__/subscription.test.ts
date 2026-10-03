@@ -116,10 +116,12 @@ test("the chat stream gates access through the ONE spend gate", () => {
   assert.match(turn, /runUnifiedChartAgent/);
 });
 
-test("the MCP bridge admits Free accounts and blocks only blocked ones", () => {
+test("the MCP bridge resolves only the owner", () => {
   const auth = read("lib/agentAuth.ts");
-  assert.match(auth, /getEntitlementForUser/);
-  assert.match(auth, /access === "blocked"/);
+  assert.match(auth, /getOwner/);
+  assert.match(auth, /MCP resolves only to the owner/);
+  assert.doesNotMatch(auth, /getEntitlementForUser/);
+  assert.doesNotMatch(auth, /x-aichart-user-sig/);
 });
 
 test("the recommendation choke point asks the spend gate, and nothing else", () => {

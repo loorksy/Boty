@@ -28,7 +28,6 @@ import {
   VISUAL_EVIDENCE_GUARDRAILS,
 } from "@/lib/chart/multiTimeframeCapture";
 import { hasFreshPlatformTab } from "@/lib/chart/liveCapture";
-import { bridgeUserSig } from "@/lib/agentAuth";
 import { getPublicUser } from "@/lib/store";
 import { createLogger } from "@/lib/logger";
 import type { VisualSnapshot } from "./agents/finalDecisionSynthesizer";
@@ -103,7 +102,6 @@ export async function captureWhereTheTabLives(
 ): Promise<CaptureResult> {
   const hasLocalTab = deps.hasLocalTab ?? hasFreshPlatformTab;
   const doFetch = deps.fetchImpl ?? fetch;
-  const lookupUser = deps.lookupUser ?? getPublicUser;
   const now = deps.now ?? Date.now;
   const local = () =>
     (deps.captureLocally ?? captureMultiTimeframeSnapshot)(userId, {
@@ -125,10 +123,6 @@ export async function captureWhereTheTabLives(
   const token = process.env.AICHART_SERVICE_TOKEN?.trim();
   if (!baseUrl || !token) return local();
 
-  const user = await lookupUser(userId).catch(() => null);
-  const sig = user?.email ? bridgeUserSig(user.email) : null;
-  if (!user?.email || !sig) return local();
-
   const startedAt = now();
   try {
     const res = await doFetch(`${baseUrl}/api/agent/chart/multi-snapshot`, {
@@ -136,8 +130,6 @@ export async function captureWhereTheTabLives(
       headers: {
         "Content-Type": "application/json",
         "x-agent-token": token,
-        "x-aichart-user-email": user.email,
-        "x-aichart-user-sig": sig,
       },
       body: JSON.stringify({
         symbol: body.symbol,

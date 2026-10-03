@@ -132,8 +132,8 @@ describe("a capture goes to the process that owns the tab", () => {
     assert.match(url, /\/api\/agent\/chart\/multi-snapshot$/);
     const headers = init.headers as Record<string, string>;
     assert.equal(headers["x-agent-token"], "service-token-long-enough");
-    assert.equal(headers["x-aichart-user-email"], "op@example.com");
-    assert.ok(headers["x-aichart-user-sig"], "the bridge signature is required");
+    assert.equal(headers["x-aichart-user-email"], undefined);
+    assert.equal(headers["x-aichart-user-sig"], undefined);
     // An unattended run must stay unattended on the far side: `live_session`
     // false is what lets the capture fall through to the SHARED chart-host tab
     // instead of waiting on an operator tab that is not there.
@@ -204,14 +204,14 @@ describe("a capture goes to the process that owns the tab", () => {
     assert.equal(calls.local, 1, "an unconfigured bridge must not cost a frame");
   });
 
-  it("captures locally when the user has no email to sign with", async () => {
+  it("delegates with the service token when no user email is available", async () => {
     const { deps: d, calls } = deps({
       lookupUser: (async () => null) as never,
       localFrames: 1,
     });
     await captureWhereTheTabLives(1, BODY, d);
-    assert.equal(calls.remote, 0, "an unsignable request is not worth sending");
-    assert.equal(calls.local, 1);
+    assert.equal(calls.remote, 1, "the service token is the bridge identity");
+    assert.equal(calls.local, 0);
   });
 });
 
