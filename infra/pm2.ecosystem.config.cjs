@@ -57,9 +57,10 @@ module.exports = {
       max_memory_restart: "1G",
     },
     {
-      // The resident agent process (src/worker.ts): one long-lived host on
-      // the Redis Streams queue, plus the legacy BullMQ job tier in the same
-      // process. Requires REDIS_URL in $ROOT/.env for durable events.
+      // Lonora Agent Gateway (src/worker.ts). This is the 24/7 runtime:
+      // Redis Streams events, goals, tasks, market watch, and sub-agents.
+      // autorestart plus a durable queue means a process restart does not
+      // drop persistent responsibilities. REDIS_URL is required in production.
       name: "aichart-worker",
       cwd: ROOT,
       // `npm run worker` → `tsx src/worker.ts`, without the shell in

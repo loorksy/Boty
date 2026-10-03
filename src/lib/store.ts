@@ -316,6 +316,8 @@ export async function upsertTelegramUser(
   const telegramId = payload.id;
   const existing = await getUserByTelegramId(telegramId);
   if (existing) {
+    const { assertOwnerUserId } = await import("./ownerIdentity");
+    await assertOwnerUserId(existing.id);
     await setTelegramChatId(existing.id, String(telegramId));
     return { user: existing, isNew: false };
   }
@@ -771,10 +773,9 @@ export async function wouldExceedQuota(
   return (await getTodayUsage(userId)) + cost > limits.claude_quota;
 }
 
-/** When false, daily claude_quota checks are skipped (single-user / unlimited). */
+/** Customer daily quotas are not part of the private agent. */
 export function isDailyQuotaEnforced(): boolean {
-  if (process.env.AICHART_SINGLE_USER === "1") return false;
-  return true;
+  return false;
 }
 
 

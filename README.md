@@ -1,17 +1,19 @@
 # Lonora
 
-An AI analyst for one instrument: **gold (XAUUSD)**.
+Lonora is one owner's private gold-market agent. It runs continuously on the
+VPS as the Agent Gateway (`src/worker.ts`), remembers across web, Telegram,
+and MCP, and keeps durable goals. There is no public signup and no customer
+billing.
 
-It reads the live market, reasons over it through an ordered chain of
-analysis gates, and issues a complete trading recommendation — direction,
-entry, stop, targets, rationale, and a calibrated confidence drawn from
-backtested evidence.
+It reads XAUUSD, reasons through the existing analysis gates, and can issue a
+recommendation — direction, entry, stop, targets, rationale, and confidence.
+Cheap deterministic checks watch the market. A model runs only after a
+material change.
 
-**It never places, modifies, or closes a trade.** There is no broker
-integration, no account linking, and no execution path of any kind. Every
-recommendation is tracked to a terminal outcome against the market's own
-candles, and those outcomes feed the performance record and the strategy
-calibration that the next recommendation is measured against.
+**The gateway never places, modifies, or closes a trade.** A manual
+confirmation path exists for the owner and nothing else can reach it: not a
+goal, a cron job, a market watcher, or a sub-agent. Recommendations are
+tracked to a terminal outcome against the market's own candles.
 
 ## Surfaces
 
@@ -19,7 +21,9 @@ calibration that the next recommendation is measured against.
 - **Recommendations** — every plan, its evidence, and its outcome.
 - **Performance** — equity curve in R, win rate, expectancy, decay alerts.
 
-Also reachable from Telegram, with the same brain behind both.
+Also reachable from Telegram and MCP, with the same owner and the same brain.
+The private control center is `/control`. Gateway health is `GET /api/gateway/status`.
+Architecture: [docs/AGENT_GATEWAY.md](docs/AGENT_GATEWAY.md).
 
 ## Stack
 

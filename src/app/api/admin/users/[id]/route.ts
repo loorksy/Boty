@@ -4,14 +4,10 @@ import { requireAdmin, handleError, ApiError } from "@/lib/api";
 import { requireAdminWith } from "@/lib/adminRoles";
 import {
   setUserAccess,
-  deleteUser,
   getPublicUser,
   logAudit,
   updateAdminLimits,
 } from "@/lib/store";
-import { getBrokerLink } from "@/lib/brokerLink/store";
-import { deleteAccount, MetaapiClientError } from "@/lib/brokerLink/metaapiClient";
-import { metaapiToken } from "@/lib/brokerLink/token";
 import { DEFAULT_ACCESS_DAYS } from "@/lib/platformAccess";
 
 const schema = z.object({
@@ -31,6 +27,11 @@ export async function PATCH(
     const { id } = await ctx.params;
     const userId = Number(id);
     if (!Number.isInteger(userId)) throw new ApiError(400, "معرّف غير صالح.");
+    const { getOwnerId } = await import("@/lib/ownerIdentity");
+    const ownerId = await getOwnerId();
+    if (ownerId != null && userId !== ownerId) {
+      throw new ApiError(403, "This private agent has one owner.");
+    }
 
     const input = schema.parse(await req.json());
     const before = await getPublicUser(userId);
@@ -88,42 +89,10 @@ export async function PATCH(
   }
 }
 
-export async function DELETE(
-  _req: NextRequest,
-  ctx: { params: Promise<{ id: string }> },
-) {
+export async function DELETE() {
   try {
-    const { admin } = await requireAdminWith("users_write");
-    const { id } = await ctx.params;
-    const userId = Number(id);
-    if (!Number.isInteger(userId)) throw new ApiError(400, "معرّف غير صالح.");
-    if (userId === admin.id) {
-      throw new ApiError(400, "لا يمكنك حذف حسابك الإداري.");
-    }
-
-    const target = await getPublicUser(userId);
-    if (!target) throw new ApiError(404, "المستخدم غير موجود.");
-    if (target.role === "admin") {
-      throw new ApiError(400, "لا يمكن حذف حساب إداري.");
-    }
-
-    const link = await getBrokerLink(userId);
-    if (link) {
-      const token = await metaapiToken();
-      if (token) {
-        try {
-          await deleteAccount({
-            token,
-            accountId: link.metaapi_account_id,
-          });
-        } catch (err) {
-          if (!(err instanceof MetaapiClientError)) throw err;
-        }
-      }
-    }
-
-    await deleteUser(userId);
-    return NextResponse.json({ ok: true });
+    await requireAdminWith("users_write");
+    throw new ApiError(403, "Accounts are not deleted from the private agent.");
   } catch (err) {
     return handleError(err);
   }

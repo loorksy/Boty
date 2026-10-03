@@ -10,8 +10,6 @@ import {
 import { isSyntheticTelegramEmail } from "@/lib/userCredentials";
 import type { UserRow } from "@/lib/types";
 import { userRowToPublicUser } from "@/lib/userSelect";
-import { getEntitlementForUser } from "@/lib/subscription/entitlement";
-
 const schema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
@@ -63,13 +61,10 @@ export async function POST(req: NextRequest) {
       const reason = getAccessBlockReason(user) ?? "pending";
       return NextResponse.json({ ok: false, reason }, { status: 403 });
     }
-
-    const entitlement = await getEntitlementForUser(user);
-    if (!entitlement.isAdmin && !entitlement.hasPaidAccess) {
-      return NextResponse.json(
-        { ok: false, reason: "subscription_required" },
-        { status: 403 },
-      );
+    const { getOwner } = await import("@/lib/ownerIdentity");
+    const owner = await getOwner();
+    if (!owner || owner.email.toLowerCase() !== row.email.toLowerCase()) {
+      return NextResponse.json({ ok: false, reason: "invalid" }, { status: 403 });
     }
 
     return NextResponse.json({

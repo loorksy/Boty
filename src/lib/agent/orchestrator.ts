@@ -1371,8 +1371,8 @@ async function runUnifiedChartAgentInner(
   // The mechanical visual-basis verdict (Phase 8): `confirmed` requires a
   // TradingView client capture WITH drawings rendered — this run, this user.
   // Everything else, including every browserless run, is `not_checked`.
-  // `let`: a post-draw recapture may upgrade not_checked → confirmed.
-  let visualReview = visualReviewFromEvidence(visual);
+  // A post-draw recapture may mutate this object (timeframes / state).
+  const visualReview = visualReviewFromEvidence(visual);
   if (visual.snapshots.length) {
     trackedCtx.emitActivity({
       type: "analysis",

@@ -82,21 +82,20 @@ describe("resolveGoogleUser", () => {
     assert.equal(user.id, 10, "subject wins over email once linked");
   });
 
-  it("creates a fresh active account for an unknown email", async () => {
-    // Signup is closed unless this key is explicitly on — the default that
-    // protects a new install. Open it here so the original create-path
-    // assertion still holds.
+  it("refuses a fresh account for an unknown email", async () => {
     const cfg = await import("@/lib/platformConfig");
+    const registration = await import("@/lib/auth/registration");
     await cfg.savePlatformConfig({ REGISTRATION_OPEN: true });
-    const { user, isNew } = await oidc.resolveGoogleUser({
-      sub: "g-sub-2",
-      email: "brandnew@gmail.com",
-      emailVerified: true,
-      name: "New",
-    });
-    assert.equal(isNew, true);
-    assert.equal(user.email, "brandnew@gmail.com");
-    assert.equal(user.status, "active");
+    await assert.rejects(
+      () =>
+        oidc.resolveGoogleUser({
+          sub: "g-sub-2",
+          email: "brandnew@gmail.com",
+          emailVerified: true,
+          name: "New",
+        }),
+      (err: unknown) => registration.isRegistrationClosedError(err),
+    );
   });
 
   it("REFUSES an unverified email that collides with an existing account", async () => {

@@ -15,6 +15,7 @@
  *    queue module's inline fallback philosophy.
  */
 import { createLogger } from "@/lib/logger";
+import { deliveryDisposition, eventMaxAttempts } from "./deliveryPolicy";
 import {
   parseResidentEvent,
   RESIDENT_GROUP,
@@ -67,10 +68,14 @@ export class MemoryBus implements EventBus {
   private concurrency = 1;
   private wake: (() => void) | null = null;
   private pumping = false;
+  private dedupe = new Map<string, string>();
 
   async publish(event: ResidentEvent): Promise<string> {
     const parsed = parseResidentEvent(event);
+    const key = parsed.idempotencyKey;
+    if (key && this.dedupe.has(key)) return this.dedupe.get(key)!;
     const id = String(++this.seq);
+    if (key) this.dedupe.set(key, id);
     this.queue.push({ id, event: parsed, attempt: 1 });
     this.wake?.();
     // Deliver asynchronously even when start() was called after publish.
@@ -173,11 +178,20 @@ export class RedisStreamBus implements EventBus {
   private active = 0;
   private loop: Promise<void> | null = null;
 
-  constructor(opts?: { url?: string; stream?: string; group?: string; consumer?: string }) {
+  private readonly reclaimMinIdleMs: number;
+
+  constructor(opts?: {
+    url?: string;
+    stream?: string;
+    group?: string;
+    consumer?: string;
+    reclaimMinIdleMs?: number;
+  }) {
     this.url = opts?.url ?? process.env.REDIS_URL ?? "";
     this.stream = opts?.stream ?? RESIDENT_STREAM;
     this.group = opts?.group ?? RESIDENT_GROUP;
     this.consumer = opts?.consumer ?? `host-${process.pid}`;
+    this.reclaimMinIdleMs = opts?.reclaimMinIdleMs ?? RECLAIM_MIN_IDLE_MS;
     if (!this.url) throw new Error("RedisStreamBus requires REDIS_URL");
   }
 
@@ -209,6 +223,16 @@ export class RedisStreamBus implements EventBus {
     const parsed = parseResidentEvent(event);
     const client = await this.connect("pub");
     await this.ensureGroup(client);
+    const dedupeKey = parsed.idempotencyKey
+      ? `${this.stream}:dedupe:${parsed.idempotencyKey}`
+      : null;
+    if (dedupeKey) {
+      const reserved = await client.set(dedupeKey, "pending", "EX", 86_400, "NX");
+      if (reserved !== "OK") {
+        const existing = await client.get(dedupeKey);
+        return existing && existing !== "pending" ? existing : "duplicate";
+      }
+    }
     const id = await client.xadd(
       this.stream,
       "MAXLEN",
@@ -218,7 +242,9 @@ export class RedisStreamBus implements EventBus {
       "event",
       JSON.stringify(parsed),
     );
-    return id ?? "0-0";
+    const entryId = id ?? "0-0";
+    if (dedupeKey) await client.set(dedupeKey, entryId, "EX", 86_400);
+    return entryId;
   }
 
   async start(
@@ -237,17 +263,40 @@ export class RedisStreamBus implements EventBus {
         if (!raw) throw new Error("stream entry without event field");
         const event = parseResidentEvent(JSON.parse(raw));
         await handler({ id, event, attempt });
+        await client.hdel(`${this.stream}:attempts`, id).catch(() => {});
         await client.xack(this.stream, this.group, id);
       } catch (err) {
-        // Malformed entries are ACKed away (poison-pill), real handler
-        // failures stay pending for reclaim so a crash never loses work.
+        // Malformed entries are ACKed away (poison). Handler failures stay
+        // pending for XAUTOCLAIM until max attempts, then move to a dead stream.
         const parseFailure =
           err instanceof SyntaxError || (err as Error)?.name === "InvalidResidentEventError";
-        if (parseFailure) await client.xack(this.stream, this.group, id).catch(() => {});
+        const message = err instanceof Error ? err.message : String(err);
+        if (parseFailure) {
+          await client.xack(this.stream, this.group, id).catch(() => {});
+        } else {
+          const deliveries = Number(await client.hincrby(`${this.stream}:attempts`, id, 1).catch(() => 1));
+          if (deliveryDisposition(deliveries, eventMaxAttempts()) === "dead") {
+            await client.xadd(
+              `${this.stream}:dead`,
+              "MAXLEN",
+              "~",
+              "1000",
+              "*",
+              "id",
+              id,
+              "event",
+              raw ?? "",
+              "error",
+              message.slice(0, 300),
+            ).catch(() => {});
+            await client.xack(this.stream, this.group, id).catch(() => {});
+            await client.hdel(`${this.stream}:attempts`, id).catch(() => {});
+          }
+        }
         log.error("event handling failed", {
           id,
           parseFailure,
-          error: err instanceof Error ? err.message : String(err),
+          error: message,
         });
       } finally {
         this.active -= 1;
@@ -263,7 +312,7 @@ export class RedisStreamBus implements EventBus {
             this.stream,
             this.group,
             this.consumer,
-            String(RECLAIM_MIN_IDLE_MS),
+            String(this.reclaimMinIdleMs),
             cursor,
             "COUNT",
             "16",

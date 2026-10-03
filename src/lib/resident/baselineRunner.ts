@@ -108,6 +108,16 @@ export class BaselineRunner implements AgentRunner {
         return runCandleSyncTick(ctx);
       case "entitlement_sweep":
         return runEntitlementSweepTick();
+      case "market_watch":
+        return (await import("@/lib/gateway/runtime")).runMarketWatchTick();
+      case "goal_dispatch":
+        return (await import("@/lib/gateway/runtime")).runGoalDispatchTick();
+      case "task_reclaim":
+        return (await import("@/lib/gateway/runtime")).runTaskReclaimTick();
+      case "guardian":
+        return (await import("@/lib/gateway/runtime")).runGuardianTick();
+      case "notify_delivery":
+        return (await import("@/lib/gateway/runtime")).runNotificationDeliveryTick();
       case "restart_check":
         // Owned by the host itself; reaching here is a routing bug.
         log.warn("restart_check reached the runner");

@@ -58,13 +58,26 @@ export const userMessageEventSchema = z.object({
   /** Present only on web turns queued for the per-turn stream relay. */
   web: webTurnRequestSchema.optional(),
   enqueuedAt: z.number().int().positive(),
+  /** Optional producer key. A second publish with the same key is a no-op. */
+  idempotencyKey: z.string().min(8).max(200).optional(),
 });
 
 export const scheduledTickEventSchema = z.object({
   kind: z.literal("scheduled_tick"),
   /** What this tick asks the host to do. */
-  tick: z.enum(["recommendation_sweep", "candle_sync", "restart_check", "entitlement_sweep"]),
+  tick: z.enum([
+    "recommendation_sweep",
+    "candle_sync",
+    "restart_check",
+    "entitlement_sweep",
+    "market_watch",
+    "goal_dispatch",
+    "task_reclaim",
+    "guardian",
+    "notify_delivery",
+  ]),
   enqueuedAt: z.number().int().positive(),
+  idempotencyKey: z.string().min(8).max(200).optional(),
 });
 
 export const marketEventSchema = z.object({
@@ -80,6 +93,7 @@ export const marketEventSchema = z.object({
   recommendationId: z.string().max(64).optional(),
   payload: z.record(z.string(), z.unknown()).optional(),
   enqueuedAt: z.number().int().positive(),
+  idempotencyKey: z.string().min(8).max(200).optional(),
 });
 
 export const residentEventSchema = z.discriminatedUnion("kind", [

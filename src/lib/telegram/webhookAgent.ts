@@ -639,6 +639,16 @@ export async function prepareTelegramTurn(
       );
       return { kind: "handled", outcome: "unlinked" };
     }
+    try {
+      const { assertOwnerUserId } = await import("@/lib/ownerIdentity");
+      await assertOwnerUserId(userId);
+    } catch (err) {
+      if (err && typeof err === "object" && (err as { name?: string }).name === "OwnerAccessError") {
+        await sendMessage(message.chatId, t(DEFAULT_LOCALE, "tg.owner_only"));
+        return { kind: "handled", outcome: "unlinked" };
+      }
+      throw err;
+    }
     await setTelegramChatId(userId, message.chatId);
     await logAudit(userId, "telegram_linked", `chat=${message.chatId}`);
     // The chat now belongs to an account, so the receipt is already in that
@@ -656,8 +666,28 @@ export async function prepareTelegramTurn(
     await sendMessage(message.chatId, linkPrompt(DEFAULT_LOCALE));
     return { kind: "handled", outcome: "unlinked" };
   }
+  try {
+    const { assertOwnerUserId } = await import("@/lib/ownerIdentity");
+    await assertOwnerUserId(userId);
+  } catch (err) {
+    if (err && typeof err === "object" && (err as { name?: string }).name === "OwnerAccessError") {
+      await sendMessage(message.chatId, t(DEFAULT_LOCALE, "tg.owner_only"));
+      return { kind: "handled", outcome: "unlinked" };
+    }
+    throw err;
+  }
   // ONE resolve for the whole turn's mechanics, threaded down from here.
   const locale = await resolveUserLocale(userId);
+
+  const gatewayCommand = await (
+    await import("@/lib/gateway/telegramControls")
+  ).handleGatewayTelegramCommand(incoming);
+  if (gatewayCommand) {
+    await sendMessage(message.chatId, gatewayCommand.text, undefined, {
+      replyToMessageId: message.messageId,
+    });
+    return { kind: "handled", outcome: "answered" };
+  }
 
   // Explicit commands are the ONE mechanical path: /chart produces a photo
   // (which the agent cannot send as prose); the other menu commands expand
@@ -749,6 +779,15 @@ export async function prepareTelegramTurn(
     return { kind: "handled", outcome: "answered" };
   }
   const turnMessage = command?.kind === "prompt" ? command.message : incoming;
+  await import("@/lib/gateway/responsibility")
+    .then(({ absorbResponsibilityUtterance }) =>
+      absorbResponsibilityUtterance({ ownerId: userId, text: turnMessage }),
+    )
+    .catch((err: unknown) => {
+      log.error("telegram.responsibility_failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
   return { kind: "agent", userId, text: turnMessage };
 }
 

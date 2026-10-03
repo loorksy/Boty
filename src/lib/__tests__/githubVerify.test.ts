@@ -17,6 +17,10 @@ import {
   type GithubVerifyResult,
 } from "@/lib/githubVerify";
 
+function testEnv(partial: Record<string, string> = {}): NodeJS.ProcessEnv {
+  return { NODE_ENV: "test", ...partial } as NodeJS.ProcessEnv;
+}
+
 const RATE_LIMIT_BODY = JSON.stringify({
   message:
     "API rate limit exceeded for 72.60.83.140. (But here's the good news: Authenticated requests get a higher rate limit. Check out the documentation for more details.)",
@@ -50,14 +54,14 @@ describe("github token + headers", () => {
   });
 
   it("reads GITHUB_TOKEN, then GH_TOKEN, then the deploy token", () => {
-    assert.equal(githubTokenFromEnv({}), null);
-    assert.equal(githubTokenFromEnv({ GH_TOKEN: "gh-only" }), "gh-only");
+    assert.equal(githubTokenFromEnv(testEnv()), null);
+    assert.equal(githubTokenFromEnv(testEnv({ GH_TOKEN: "gh-only" })), "gh-only");
     assert.equal(
-      githubTokenFromEnv({ GITHUB_TOKEN: "primary", GH_TOKEN: "gh-only" }),
+      githubTokenFromEnv(testEnv({ GITHUB_TOKEN: "primary", GH_TOKEN: "gh-only" })),
       "primary",
     );
     assert.equal(
-      githubTokenFromEnv({ GITHUB_DEPLOY_TOKEN: "deploy" }),
+      githubTokenFromEnv(testEnv({ GITHUB_DEPLOY_TOKEN: "deploy" })),
       "deploy",
     );
   });
@@ -124,7 +128,7 @@ describe("verifyGithub", () => {
   it("soft-skips an unauthenticated 403 rate-limit instead of a hard crash", async () => {
     let calls = 0;
     const result = await verifyGithub({
-      env: {},
+      env: testEnv(),
       locale: "ar",
       fetchImpl: (async () => {
         calls += 1;
@@ -151,7 +155,7 @@ describe("verifyGithub", () => {
   it("sends Authorization: Bearer when a token is present and still verifies", async () => {
     let seenAuth = "";
     const result = await verifyGithub({
-      env: { GITHUB_TOKEN: "ghs_test_token" },
+      env: testEnv({ GITHUB_TOKEN: "ghs_test_token" }),
       locale: "ar",
       fetchImpl: (async (_url, init) => {
         const headers = new Headers(init?.headers);
@@ -171,7 +175,7 @@ describe("verifyGithub", () => {
 
   it("still runs a live check when GitHub is reachable without a token", async () => {
     const result = await verifyGithub({
-      env: {},
+      env: testEnv(),
       locale: "en",
       fetchImpl: (async () =>
         jsonResponse(200, { full_name: "loorksy/AiChart" })) as typeof fetch,
@@ -184,7 +188,7 @@ describe("verifyGithub", () => {
 
   it("hard-fails a permission 403 that is not a rate limit", async () => {
     const result = await verifyGithub({
-      env: { GITHUB_TOKEN: "bad-or-limited-scope" },
+      env: testEnv({ GITHUB_TOKEN: "bad-or-limited-scope" }),
       locale: "ar",
       fetchImpl: (async () =>
         jsonResponse(403, {
@@ -199,7 +203,7 @@ describe("verifyGithub", () => {
 
   it("hard-fails a real 404 and surfaces the Arabic verification prefix", async () => {
     const result = await verifyGithub({
-      env: {},
+      env: testEnv(),
       locale: "ar",
       fetchImpl: (async () =>
         jsonResponse(404, { message: "Not Found" })) as typeof fetch,
@@ -222,7 +226,7 @@ describe("verifyGithub", () => {
 
     const slept: number[] = [];
     const ok = await verifyGithub({
-      env: {},
+      env: testEnv(),
       fetchImpl,
       sleep: async (ms) => {
         slept.push(ms);
@@ -234,7 +238,7 @@ describe("verifyGithub", () => {
 
     statuses.length = 0;
     const limited = await verifyGithub({
-      env: {},
+      env: testEnv(),
       locale: "ar",
       cache: { get: () => null, set: () => {} },
       fetchImpl: (async () => {
@@ -260,13 +264,13 @@ describe("verifyGithub", () => {
     };
 
     await verifyGithub({
-      env: { GH_TOKEN: "tok" },
+      env: testEnv({ GH_TOKEN: "tok" }),
       cache: store,
       fetchImpl: (async () => jsonResponse(200, { ok: true })) as typeof fetch,
     });
 
     const limited = await verifyGithub({
-      env: {},
+      env: testEnv(),
       locale: "ar",
       cache: store,
       fetchImpl: (async () => jsonResponse(403, RATE_LIMIT_BODY)) as typeof fetch,
@@ -281,7 +285,7 @@ describe("verifyGithub", () => {
   it("soft-skips a thrown rate-limit body instead of the Arabic hard-fail prefix", async () => {
     let calls = 0;
     const result = await verifyGithub({
-      env: {},
+      env: testEnv(),
       locale: "ar",
       fetchImpl: (async () => {
         calls += 1;
@@ -307,9 +311,9 @@ describe("verifyGithub", () => {
       calls += 1;
       return jsonResponse(403, RATE_LIMIT_BODY, { "x-ratelimit-remaining": "0" });
     }) as typeof fetch;
-    const first = await verifyGithub({ env: {}, locale: "ar", fetchImpl });
+    const first = await verifyGithub({ env: testEnv(), locale: "ar", fetchImpl });
     const second = await verifyGithub({
-      env: {},
+      env: testEnv(),
       locale: "ar",
       fetchImpl,
       nowMs: Date.now() + 1_000,
@@ -325,7 +329,7 @@ describe("healthz / public gate helpers", () => {
     assert.equal(
       shouldIncludeGithubOnHealthz({
         searchParams: new URLSearchParams(),
-        env: {},
+        env: testEnv(),
       }),
       false,
     );
@@ -335,14 +339,14 @@ describe("healthz / public gate helpers", () => {
     assert.equal(
       shouldIncludeGithubOnHealthz({
         searchParams: new URLSearchParams("github=1"),
-        env: {},
+        env: testEnv(),
       }),
       true,
     );
     assert.equal(
       shouldIncludeGithubOnHealthz({
         searchParams: new URLSearchParams(),
-        env: { HEALTHZ_VERIFY_GITHUB: "1" },
+        env: testEnv({ HEALTHZ_VERIFY_GITHUB: "1" }),
       }),
       true,
     );

@@ -1,3 +1,25 @@
+## Single-owner Agent Gateway
+
+Lonora is no longer a multi-user SaaS. One owner is resolved by
+`src/lib/ownerIdentity.ts`. Public registration is closed. Customer checkout,
+packs, portal, and admin credit/subscription mutations return `410 BILLING_RETIRED`.
+Provider token cost remains in `usage_events` and is shown as operator cost.
+
+Existing databases are not rewritten on boot. Convert one with a dry-run first:
+
+```bash
+npx tsx scripts/migrate-single-owner.ts
+npx tsx scripts/migrate-single-owner.ts --owner-email you@example.com --apply --retire-others
+```
+
+The script refuses to guess when several users exist, never deletes users, and
+reports telegram and unique-key conflicts instead of dropping history.
+`user_id` columns stay as the owner's foreign key.
+
+The resident worker is the Gateway. Production exits unless `REDIS_URL` is set.
+External cron lines for the sweep, candle sync, and event monitor are watchdogs
+and no-op while the gateway heartbeat is fresh.
+
 ## Round 3 — retired LLM gateways, silent notifications, surfaces with their own models
 
 **OpenRouter and TokenRouter are gone** (commit `0ab12eb` and follow-ups). The

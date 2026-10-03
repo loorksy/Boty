@@ -42,12 +42,21 @@ before(async () => {
   i18n = await import("@/lib/i18n");
 });
 
+async function pinOwner(userId: number): Promise<void> {
+  process.env.AICHART_AGENT_USER_ID = String(userId);
+  const owner = await import("@/lib/ownerIdentity");
+  owner.resetOwnerCacheForTests();
+}
+
 beforeEach(async () => {
   cfg.clearPlatformConfigCache();
   await db.execute("DELETE FROM platform_config WHERE key = ?", [
     registration.REGISTRATION_OPEN_KEY,
   ]);
   delete process.env.REGISTRATION_OPEN;
+  delete process.env.AICHART_AGENT_USER_ID;
+  const owner = await import("@/lib/ownerIdentity");
+  owner.resetOwnerCacheForTests();
   cfg.clearPlatformConfigCache();
 });
 
@@ -63,10 +72,10 @@ describe("isRegistrationOpen", () => {
     );
   });
 
-  it("opens after the admin saves the toggle on", async () => {
+  it("stays closed after the admin saves the historical toggle on", async () => {
     await cfg.savePlatformConfig({ REGISTRATION_OPEN: true });
-    assert.equal(await registration.isRegistrationOpen(), true);
-    await registration.assertRegistrationOpen();
+    assert.equal(await registration.isRegistrationOpen(), false);
+    await assert.rejects(() => registration.assertRegistrationOpen());
   });
 
   it("stays closed when the admin saves the toggle off", async () => {
@@ -105,10 +114,10 @@ describe("POST /api/auth/register", () => {
     assert.equal(await userCount(), beforeCount);
   });
 
-  it("does not refuse at the gate once the admin has opened registration", async () => {
+  it("still refuses at the gate after the historical toggle is saved on", async () => {
     await cfg.savePlatformConfig({ REGISTRATION_OPEN: true });
-    assert.equal(await registration.isRegistrationOpen(), true);
-    await registration.assertRegistrationOpen();
+    assert.equal(await registration.isRegistrationOpen(), false);
+    await assert.rejects(() => registration.assertRegistrationOpen());
   });
 });
 
@@ -168,6 +177,7 @@ describe("Google first-time vs existing", () => {
       "INSERT INTO oauth_identities (provider, subject, user_id, email, created_at) VALUES ('google', ?, ?, ?, ?)",
       ["g-closed-existing", userId, email, Date.now()],
     );
+    await pinOwner(userId);
     const { user, isNew } = await oidc.resolveGoogleUser({
       sub: "g-closed-existing",
       email: "changed-later@gmail.com",
@@ -184,6 +194,7 @@ describe("Google first-time vs existing", () => {
       "INSERT INTO users (email, password_hash, role, status) VALUES (?, ?, 'user', 'active')",
       [email, auth.hashPassword("x")],
     );
+    await pinOwner(userId);
     const { user, isNew } = await oidc.resolveGoogleUser({
       sub: `g-link-sub-${userId}`,
       email,
@@ -194,17 +205,21 @@ describe("Google first-time vs existing", () => {
     assert.equal(user.id, userId);
   });
 
-  it("creates a Google account once the admin opens registration", async () => {
+  it("refuses a new Google account even when the historical toggle is on", async () => {
     await cfg.savePlatformConfig({ REGISTRATION_OPEN: true });
+    const beforeCount = await userCount();
     const email = `g-open-${Date.now()}@gmail.com`;
-    const { user, isNew } = await oidc.resolveGoogleUser({
-      sub: `g-open-${Date.now()}`,
-      email,
-      emailVerified: true,
-      name: "Open",
-    });
-    assert.equal(isNew, true);
-    assert.equal(user.email, email);
+    await assert.rejects(
+      () =>
+        oidc.resolveGoogleUser({
+          sub: `g-open-${Date.now()}`,
+          email,
+          emailVerified: true,
+          name: "Open",
+        }),
+      (err: unknown) => registration.isRegistrationClosedError(err),
+    );
+    assert.equal(await userCount(), beforeCount);
   });
 });
 
@@ -234,6 +249,7 @@ describe("Telegram first-time vs existing", () => {
       "INSERT INTO users (email, password_hash, role, status, telegram_id) VALUES (?, ?, 'user', 'active', ?)",
       [email, auth.hashPassword("x"), telegramId],
     );
+    await pinOwner(userId);
     const { user, isNew } = await store.upsertTelegramUser({
       id: telegramId,
       first_name: "Existing",
@@ -245,18 +261,22 @@ describe("Telegram first-time vs existing", () => {
     assert.equal(user.id, userId);
   });
 
-  it("creates a Telegram account once the admin opens registration", async () => {
+  it("refuses a new Telegram account even when the historical toggle is on", async () => {
     await cfg.savePlatformConfig({ REGISTRATION_OPEN: true });
+    const beforeCount = await userCount();
     const telegramId = 8_000_003;
-    const { user, isNew } = await store.upsertTelegramUser({
-      id: telegramId,
-      first_name: "Open",
-      username: "opentg",
-      auth_date: Math.floor(Date.now() / 1000),
-      hash: "unused-here",
-    });
-    assert.equal(isNew, true);
-    assert.equal(user.telegram_id, telegramId);
+    await assert.rejects(
+      () =>
+        store.upsertTelegramUser({
+          id: telegramId,
+          first_name: "Open",
+          username: "opentg",
+          auth_date: Math.floor(Date.now() / 1000),
+          hash: "unused-here",
+        }),
+      (err: unknown) => registration.isRegistrationClosedError(err),
+    );
+    assert.equal(await userCount(), beforeCount);
   });
 });
 

@@ -146,7 +146,10 @@ function SmartChartWorkspaceInner({
   capture?: boolean;
 }) {
   const chartRef = useRef<TvChartHandle>(null);
-  const agentRef = useRef<SmartChartAgentHandle>(null);
+  const [agentHandle, setAgentHandle] = useState<SmartChartAgentHandle | null>(null);
+  const bindAgent = useCallback((node: SmartChartAgentHandle | null) => {
+    setAgentHandle(node);
+  }, []);
   // Last final agent result — surfaced read-only via the dev/test debug bridge.
   const lastFinalResultRef = useRef<AgentFinalResult | null>(null);
   /**
@@ -365,7 +368,18 @@ function SmartChartWorkspaceInner({
     dataSource,
     drawingsCleared,
   });
-  layoutSnapshotRef.current = {
+  useEffect(() => {
+    layoutSnapshotRef.current = {
+      drawings,
+      overlays,
+      studies,
+      recommendation,
+      targets,
+      liveReasoningLog,
+      dataSource,
+      drawingsCleared,
+    };
+  }, [
     drawings,
     overlays,
     studies,
@@ -374,7 +388,7 @@ function SmartChartWorkspaceInner({
     liveReasoningLog,
     dataSource,
     drawingsCleared,
-  };
+  ]);
 
   const persistLayoutImmediate = useCallback(
     (state: ChartLayoutState) => {
@@ -619,12 +633,12 @@ function SmartChartWorkspaceInner({
       recommendation: null,
       targets: [],
       liveReasoningLog: [],
-      dataSource: layoutSnapshotRef.current.dataSource,
+      dataSource,
       drawingsCleared: true,
     });
     clearLayers();
     stopLiveAnalysis();
-  }, [clearLayers, stopLiveAnalysis, persistLayoutImmediate]);
+  }, [clearLayers, stopLiveAnalysis, persistLayoutImmediate, dataSource]);
 
   // Apply the agent's drawings to the chart: keep user/manual drawings, replace
   // only the agent-owned set (one coherent set of drawings on the chart).
@@ -734,9 +748,9 @@ function SmartChartWorkspaceInner({
       return;
     }
     setChartSheetOpen(false);
-    // Defer so the panel mounts before the imperative call.
-    setTimeout(() => agentRef.current?.quickAnalyze(), 0);
-  }, [guest, router]);
+    const handle = agentHandle;
+    setTimeout(() => handle?.quickAnalyze(), 0);
+  }, [guest, router, agentHandle]);
 
   const hasLayers =
     drawings.length > 0 ||
@@ -1174,13 +1188,11 @@ function SmartChartWorkspaceInner({
               />
             </ChartErrorBoundary>
 
+            {/* Callbacks read chart refs on click. The list itself is plain data. */}
+            {/* eslint-disable react-hooks/refs */}
             {!chatEnabled && !capture && headerActions.length > 0 && (
               <div className="pointer-events-none absolute inset-x-0 top-2 z-20 flex justify-end px-2">
                 <div className="pointer-events-auto flex flex-wrap justify-end gap-1">
-                  {/* eslint-disable-next-line react-hooks/refs -- false positive:
-                      the map only forwards action.onClick as a prop; the ref
-                      inside handleAnalyzeClick is read in a deferred event
-                      handler, never during render. */}
                   {headerActions.map((action) => (
                     <button
                       key={action.id}
@@ -1195,6 +1207,7 @@ function SmartChartWorkspaceInner({
                 </div>
               </div>
             )}
+            {/* eslint-enable react-hooks/refs */}
 
             <ChartTradeOverlay
               recommendation={recommendation}
@@ -1227,7 +1240,7 @@ function SmartChartWorkspaceInner({
                 remains in the composer + menu — not as a row above the chat. */}
             <SmartChartAgentPanel
               key={chat.panelKey}
-              ref={agentRef}
+              ref={bindAgent}
               symbol={symbol}
               interval={interval}
               layoutId={layoutId}

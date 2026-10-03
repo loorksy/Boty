@@ -77,30 +77,23 @@ async function fetchWithTimeout(
 }
 
 export class BridgeClient {
-  constructor(
-    private readonly cfg: AppConfig,
-    private readonly actAsEmail?: string,
-  ) {}
+  constructor(private readonly cfg: AppConfig) {}
 
-  static forUser(cfg: AppConfig, email: string): BridgeClient {
-    return new BridgeClient(cfg, email.toLowerCase());
+  /** Email is ignored. The service token authenticates the channel; the web tier resolves the owner. */
+  static forUser(cfg: AppConfig, email?: string): BridgeClient {
+    void email;
+    return new BridgeClient(cfg);
   }
 
   static fromAuthInfo(cfg: AppConfig, authInfo: AuthInfo): BridgeClient {
-    const extra = authInfo.extra as { email?: string } | undefined;
-    const email = extra?.email?.trim() || "";
-    if (!email) {
-      throw new BridgeError(
-        "OAuth token missing user email — cannot scope bridge.",
-        401,
-        null,
-      );
+    if (!authInfo?.token) {
+      throw new BridgeError("OAuth token missing.", 401, null);
     }
-    return BridgeClient.forUser(cfg, email);
+    return new BridgeClient(cfg);
   }
 
   private headers(): Record<string, string> {
-    const base: Record<string, string> = {
+    return {
       Authorization: `Bearer ${this.cfg.serviceToken}`,
       "Content-Type": "application/json",
       Accept: "application/json",
@@ -110,12 +103,6 @@ export class BridgeClient {
       // served it. The web side honours this id and echoes it as trace_id.
       "X-Aichart-Request-Id": newTraceId(),
     };
-    if (this.actAsEmail) {
-      const email = this.actAsEmail.toLowerCase();
-      base["X-Aichart-User-Email"] = email;
-      base["X-Aichart-User-Sig"] = bridgeUserSig(this.cfg.serviceToken, email);
-    }
-    return base;
   }
 
   async get(
@@ -144,13 +131,6 @@ export class BridgeClient {
       throw new BridgeError(
         "AICHART_SERVICE_TOKEN غير مُعدّ على MCP Server.",
         503,
-        null,
-      );
-    }
-    if (this.cfg.authMode === "oauth" && !this.actAsEmail) {
-      throw new BridgeError(
-        "Bridge session missing user identity.",
-        401,
         null,
       );
     }
@@ -215,13 +195,6 @@ export class BridgeClient {
       throw new BridgeError(
         "AICHART_SERVICE_TOKEN غير مُعدّ على MCP Server.",
         503,
-        null,
-      );
-    }
-    if (this.cfg.authMode === "oauth" && !this.actAsEmail) {
-      throw new BridgeError(
-        "Bridge session missing user identity.",
-        401,
         null,
       );
     }

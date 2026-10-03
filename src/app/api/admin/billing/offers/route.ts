@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { handleError } from "@/lib/api";
-import { auditAdminAction, requireAdminWith } from "@/lib/adminRoles";
+import { requireAdminWith } from "@/lib/adminRoles";
 import { initDb } from "@/lib/db";
-import { createOffer, listOffers, setOfferActive } from "@/lib/billing/planConfig";
+import { billingRetired } from "@/lib/billing/retired";
+import { listOffers } from "@/lib/billing/planConfig";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,58 +23,19 @@ export async function GET() {
   }
 }
 
-const createSchema = z
-  .object({
-    kind: z.enum(["percent", "fixed_cents"]),
-    value: z.number().int().min(1).max(100_000_000),
-    starts_at: z.number().int().positive(),
-    ends_at: z.number().int().positive(),
-  })
-  .strict();
-
-export async function POST(req: Request) {
+export async function POST() {
   try {
-    const { admin } = await requireAdminWith("billing_write");
-    await initDb();
-    const parsed = createSchema.safeParse(await req.json().catch(() => null));
-    if (!parsed.success) {
-      return NextResponse.json(
-        { ok: false, error: parsed.error.issues[0]?.message ?? "invalid payload" },
-        { status: 400 },
-      );
-    }
-    const id = await createOffer({
-      kind: parsed.data.kind,
-      value: parsed.data.value,
-      startsAt: parsed.data.starts_at,
-      endsAt: parsed.data.ends_at,
-      createdBy: admin.id,
-    });
-    await auditAdminAction(admin.id, "offer_create", String(id), JSON.stringify(parsed.data));
-    return NextResponse.json({ ok: true, id, offers: await listOffers() });
+    await requireAdminWith("billing_write");
+    return billingRetired();
   } catch (err) {
     return handleError(err);
   }
 }
 
-const patchSchema = z
-  .object({ id: z.number().int().positive(), active: z.boolean() })
-  .strict();
-
-export async function PATCH(req: Request) {
+export async function PATCH() {
   try {
-    const { admin } = await requireAdminWith("billing_write");
-    await initDb();
-    const parsed = patchSchema.safeParse(await req.json().catch(() => null));
-    if (!parsed.success) {
-      return NextResponse.json(
-        { ok: false, error: parsed.error.issues[0]?.message ?? "invalid payload" },
-        { status: 400 },
-      );
-    }
-    await setOfferActive(parsed.data.id, parsed.data.active);
-    await auditAdminAction(admin.id, "offer_toggle", String(parsed.data.id), String(parsed.data.active));
-    return NextResponse.json({ ok: true, offers: await listOffers() });
+    await requireAdminWith("billing_write");
+    return billingRetired();
   } catch (err) {
     return handleError(err);
   }

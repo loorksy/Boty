@@ -91,14 +91,21 @@ sudo -u postgres psql -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON DATABASE ai
 sudo -u postgres psql -d aichart -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
 log "redis on localhost (existing config is left as-is)"
-if systemctl list-unit-files --no-legend | awk '{print $1}' | grep -qx 'redis-server.service'; then
-  systemctl enable --now redis-server
-elif systemctl list-unit-files --no-legend | awk '{print $1}' | grep -qx 'redis.service'; then
-  systemctl enable --now redis
-else
+# Do not pipe `systemctl list-unit-files` into `grep -q` under pipefail:
+# grep exits at the first hit and the writer gets SIGPIPE, so a present
+# redis-server unit looks missing and the alias `redis.service` is enabled
+# instead, which systemd rejects.
+redis_unit=""
+if systemctl cat redis-server.service >/dev/null 2>&1; then
+  redis_unit="redis-server"
+elif systemctl cat redis.service >/dev/null 2>&1; then
+  redis_unit="redis"
+fi
+if [ -z "$redis_unit" ]; then
   echo "FATAL: redis service not found after install" >&2
   exit 1
 fi
+systemctl enable --now "$redis_unit"
 
 log "checkout $BRANCH"
 if [ -d "$INSTALL_DIR/.git" ]; then

@@ -1,20 +1,15 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { handleError } from "@/lib/api";
-import { auditAdminAction, requireAdminWith } from "@/lib/adminRoles";
+import { requireAdminWith } from "@/lib/adminRoles";
 import { initDb } from "@/lib/db";
+import { billingRetired } from "@/lib/billing/retired";
 import {
   SPEND_OPS,
-  bustBillingConfigCache,
   getBillingPlan,
   getCreditPrice,
   getCurrentPlanPrice,
   listOffers,
   listTopupPacks,
-  setCreditPrice,
-  setPlanPrice,
-  updateBillingPlanSettings,
-  type SpendOp,
 } from "@/lib/billing/planConfig";
 import { paymentStatus } from "@/lib/billing/paymentProvider";
 
@@ -54,79 +49,19 @@ export async function GET() {
   }
 }
 
-const putSchema = z
-  .object({
-    // Credits handed to a NEW account, once ever. Raising or lowering it
-    // affects new accounts only — existing balances are never touched.
-    signup_grant_credits: z.number().int().min(0).max(1_000_000).optional(),
-    // Reward:risk floor on the first target, x100 (250 = 2.5:1). 0 = off.
-    min_rr_first_target_bp: z.number().int().min(0).max(10_000).optional(),
-    low_balance_threshold: z.number().int().min(0).max(1_000_000).optional(),
-    expiry_warn_days: z.number().int().min(0).max(90).optional(),
-    credit_prices: z
-      .record(z.enum(["recommendation", "chat_turn", "mt5_link"]), z.number().int().min(0).max(1_000_000))
-      .optional(),
-  })
-  .strict();
-
-export async function PUT(req: Request) {
+export async function PUT() {
   try {
-    const { admin } = await requireAdminWith("billing_write");
-    await initDb();
-    const parsed = putSchema.safeParse(await req.json().catch(() => null));
-    if (!parsed.success) {
-      return NextResponse.json(
-        { ok: false, error: parsed.error.issues[0]?.message ?? "invalid payload" },
-        { status: 400 },
-      );
-    }
-    const { credit_prices, ...planPatch } = parsed.data;
-    if (Object.keys(planPatch).length) {
-      await updateBillingPlanSettings(planPatch, admin.id);
-    }
-    if (credit_prices) {
-      for (const [op, credits] of Object.entries(credit_prices)) {
-        await setCreditPrice(op as SpendOp, credits, admin.id);
-      }
-    }
-    bustBillingConfigCache();
-    await auditAdminAction(admin.id, "billing_config", "plan", JSON.stringify(parsed.data));
-    return GET();
+    await requireAdminWith("billing_write");
+    return billingRetired();
   } catch (err) {
     return handleError(err);
   }
 }
 
-const priceSchema = z
-  .object({
-    price_cents: z.number().int().min(0).max(100_000_000),
-    credits_per_cycle: z.number().int().min(0).max(10_000_000),
-    cycle_days: z.number().int().min(1).max(366),
-  })
-  .strict();
-
-/** "Change the price" = a NEW immutable row; the old one is archived. */
-export async function POST(req: Request) {
+export async function POST() {
   try {
-    const { admin } = await requireAdminWith("billing_write");
-    await initDb();
-    const parsed = priceSchema.safeParse(await req.json().catch(() => null));
-    if (!parsed.success) {
-      return NextResponse.json(
-        { ok: false, error: parsed.error.issues[0]?.message ?? "invalid payload" },
-        { status: 400 },
-      );
-    }
-    const row = await setPlanPrice(
-      {
-        priceCents: parsed.data.price_cents,
-        creditsPerCycle: parsed.data.credits_per_cycle,
-        cycleDays: parsed.data.cycle_days,
-      },
-      admin.id,
-    );
-    await auditAdminAction(admin.id, "billing_plan_price", String(row.id), JSON.stringify(parsed.data));
-    return NextResponse.json({ ok: true, price: row });
+    await requireAdminWith("billing_write");
+    return billingRetired();
   } catch (err) {
     return handleError(err);
   }

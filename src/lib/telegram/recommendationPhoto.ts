@@ -29,7 +29,6 @@
  * must never block a recommendation.
  */
 import { withTimeout } from "@/lib/agent/timeout";
-import { bridgeUserSig } from "@/lib/agentAuth";
 import { hasFreshPlatformTab } from "@/lib/chart/liveCapture";
 import { captureBudgets } from "@/lib/chart/multiTimeframeCapture";
 import { captureChartWithPlatformFallback } from "@/lib/chart/platformCapture";
@@ -95,18 +94,12 @@ async function delegateToWebProcess(
   const baseUrl = process.env.AICHART_API_URL?.trim().replace(/\/$/, "");
   const token = process.env.AICHART_SERVICE_TOKEN?.trim();
   if (!baseUrl || !token) return null;
-  const user = await (deps.lookupUser ?? getPublicUser)(input.userId).catch(() => null);
-  const sig = user?.email ? bridgeUserSig(user.email) : null;
-  if (!user?.email || !sig) return null;
-
   try {
     const res = await (deps.fetchImpl ?? fetch)(`${baseUrl}/api/agent/chart/snapshot`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "x-agent-token": token,
-        "x-aichart-user-email": user.email,
-        "x-aichart-user-sig": sig,
       },
       body: JSON.stringify({
         symbol: input.symbol,

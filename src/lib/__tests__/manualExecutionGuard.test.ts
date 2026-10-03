@@ -85,6 +85,14 @@ test("no agent, resident, scheduler, sweep, or scan path reaches the order modul
     "src/lib/recommendations/recommendationTracker.ts",
     "src/lib/recommendations/reevaluationCycle.ts",
     "src/lib/scheduler/internalScheduler.ts",
+    "src/lib/resident/baselineRunner.ts",
+    "src/lib/gateway/runtime.ts",
+    "src/lib/gateway/subagents.ts",
+    "src/lib/gateway/marketMonitor.ts",
+    "src/lib/gateway/specialists.ts",
+    "src/lib/gateway/deepModel.ts",
+    "src/lib/gateway/approvals.ts",
+    "src/lib/gateway/notify.ts",
   ]
     .map((entry) => path.join(REPO, entry))
     .filter((entry) => existsSync(entry));

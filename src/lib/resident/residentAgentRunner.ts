@@ -91,6 +91,18 @@ export class ResidentAgentRunner extends BaselineRunner {
   }
 
   override async onUserMessage(event: UserMessageEvent, ctx: AgentRunContext): Promise<void> {
+    try {
+      const { getOwnerId } = await import("@/lib/ownerIdentity");
+      const ownerId = await getOwnerId();
+      if (ownerId != null && ownerId === event.userId && event.text.trim()) {
+        const { absorbResponsibilityUtterance } = await import("@/lib/gateway/responsibility");
+        await absorbResponsibilityUtterance({ ownerId, text: event.text });
+      }
+    } catch (err) {
+      log.error("responsibility absorb failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     // Queued web turns (Work B): the full web pipeline runs HERE — usage
     // metering and the balance commit included — and every SSE event lands
     // in the per-turn stream the web route relays. The consumer reports

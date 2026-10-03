@@ -88,7 +88,11 @@ export async function getCurrentUser(): Promise<PublicUser | null> {
     [session.sub],
   );
   if (!row) return null;
-  return userRowToPublicUser(row);
+  const user = userRowToPublicUser(row);
+  const { resolveOwner } = await import("./ownerIdentity");
+  const resolved = await resolveOwner();
+  if (!resolved.ok || user.id !== resolved.id) return null;
+  return user;
 }
 
 export { SESSION_COOKIE };

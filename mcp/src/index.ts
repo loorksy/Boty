@@ -277,13 +277,7 @@ async function bridgeForRequest(
     const authInfo = await oauthProvider.verifyAccessToken(token);
     return BridgeClient.fromAuthInfo(cfg, authInfo);
   }
-  const email = process.env.AICHART_AGENT_USER_EMAIL?.trim();
-  if (!email) {
-    throw new Error(
-      "Set AICHART_AGENT_USER_EMAIL when MCP_AUTH_MODE is not oauth.",
-    );
-  }
-  return BridgeClient.forUser(cfg, email);
+  return new BridgeClient(cfg);
 }
 
 /** Stateless request: fresh server+transport per call, torn down on response.
